@@ -1,0 +1,179 @@
+import { useState } from 'react'
+import type { Book } from '../lib/supabase'
+import { X, Type, Sun, Moon, Compass, ChevronLeft, ChevronRight, FileText } from 'lucide-react'
+
+interface EbookReaderProps {
+  book: Book
+  onClose: () => void
+}
+
+export function EbookReader({ book, onClose }: EbookReaderProps) {
+  const [theme, setTheme] = useState<'paper' | 'dark' | 'clean'>('paper')
+  const [fontSize, setFontSize] = useState<'sm' | 'md' | 'lg'>('md')
+  const [fontFamily, setFontFamily] = useState<'serif' | 'sans' | 'mono'>('serif')
+  const [currentPage, setCurrentPage] = useState(1)
+
+  // Default content fallback in case book text is blank
+  const defaultEbookContent = `Chapter 1: Foundations of the Discipline
+
+Welcome to the digital edition of ${book.title}. This academic volume serves as a core textbook for students in Matalam Polytechnic College Inc. studying ${book.category} and related fields. 
+
+In this chapter, we outline the fundamental theories, historical milestones, and practical frameworks that define this area of study. Understanding these concepts forms the base upon which all advanced knowledge and practical designs are built.
+
+Chapter 2: Structural Methodologies and Frameworks
+
+Section 2.1: Key Principles
+Success in modern applications relies on adhering to core methodologies. These include structured analysis, modular construction, robust error prevention, and clean data lifecycle administration. 
+
+Section 2.2: Implementations
+When building systems, theoretical structures must be translated into active services. In the next section, we walk through how librarians, administrators, and students collaborate within a shared virtual space.
+
+Chapter 3: Future Directions and Summary
+
+The future of academic systems lies in the convergence of automated artificial intelligence, instant communications (like SMS notifications), digital books (E-Books), and unified metrics. 
+
+By integrating these features, modern educational resources become interactive hubs that optimize resource allocation, prevent data loss, and support dynamic learning behavior.`
+
+  const rawContent = book.content || defaultEbookContent
+  
+  // Split raw content by double newlines to render as readable paragraphs
+  const paragraphs = rawContent.split('\n\n').filter(p => p.trim() !== '')
+
+  // Group paragraphs into "pages" (approx 3 paragraphs per page for clean layout)
+  const paragraphsPerPage = 2
+  const totalPages = Math.ceil(paragraphs.length / paragraphsPerPage)
+  const paginatedParagraphs = paragraphs.slice((currentPage - 1) * paragraphsPerPage, currentPage * paragraphsPerPage)
+
+  const handleNextPage = () => {
+    if (currentPage < totalPages) setCurrentPage(currentPage + 1)
+  }
+
+  const handlePrevPage = () => {
+    if (currentPage > 1) setCurrentPage(currentPage - 1)
+  }
+
+  return (
+    <div className={`ebook-reader-overlay theme-${theme}`}>
+      <div className="ebook-reader-container">
+        
+        {/* Top Control Bar */}
+        <header className="reader-header">
+          <div className="reader-info">
+            <FileText size={20} className="reader-icon" />
+            <div>
+              <h3>{book.title}</h3>
+              <p className="author-tag">By {book.author} • {book.category}</p>
+            </div>
+          </div>
+          
+          <div className="reader-settings">
+            {/* Font Family controls */}
+            <div className="settings-group font-picker" title="Font Family">
+              <button 
+                className={fontFamily === 'serif' ? 'active' : ''} 
+                onClick={() => setFontFamily('serif')}
+              >
+                Serif
+              </button>
+              <button 
+                className={fontFamily === 'sans' ? 'active' : ''} 
+                onClick={() => setFontFamily('sans')}
+              >
+                Sans
+              </button>
+              <button 
+                className={fontFamily === 'mono' ? 'active' : ''} 
+                onClick={() => setFontFamily('mono')}
+              >
+                Mono
+              </button>
+            </div>
+
+            {/* Font Size controls */}
+            <div className="settings-group" title="Text Size">
+              <button onClick={() => setFontSize('sm')} className={fontSize === 'sm' ? 'active' : ''}>
+                <Type size={14} />
+              </button>
+              <button onClick={() => setFontSize('md')} className={fontSize === 'md' ? 'active' : ''}>
+                <Type size={18} />
+              </button>
+              <button onClick={() => setFontSize('lg')} className={fontSize === 'lg' ? 'active' : ''}>
+                <Type size={22} />
+              </button>
+            </div>
+
+            {/* Theme controls */}
+            <div className="settings-group" title="Theme Color">
+              <button 
+                onClick={() => setTheme('paper')} 
+                className={`theme-btn btn-theme-paper ${theme === 'paper' ? 'active' : ''}`}
+              >
+                <Compass size={16} />
+              </button>
+              <button 
+                onClick={() => setTheme('clean')} 
+                className={`theme-btn btn-theme-clean ${theme === 'clean' ? 'active' : ''}`}
+              >
+                <Sun size={16} />
+              </button>
+              <button 
+                onClick={() => setTheme('dark')} 
+                className={`theme-btn btn-theme-dark ${theme === 'dark' ? 'active' : ''}`}
+              >
+                <Moon size={16} />
+              </button>
+            </div>
+
+            <button className="reader-close-btn" onClick={onClose} title="Exit Reader">
+              <X size={20} />
+            </button>
+          </div>
+        </header>
+
+        {/* Content Pane */}
+        <main className={`reader-content font-${fontFamily} size-${fontSize}`}>
+          <div className="content-container">
+            {paginatedParagraphs.map((para, index) => {
+              // Highlight headers (e.g. Chapter 1, Section 1.1)
+              const isHeader = para.trim().startsWith('Chapter') || para.trim().startsWith('Section')
+              return isHeader ? (
+                <h4 key={index} className="reader-chapter-title">{para}</h4>
+              ) : (
+                <p key={index} className="reader-paragraph">{para}</p>
+              )
+            })}
+          </div>
+        </main>
+
+        {/* Page Footer Navigation */}
+        <footer className="reader-footer">
+          <button 
+            className="footer-nav-btn" 
+            onClick={handlePrevPage} 
+            disabled={currentPage === 1}
+          >
+            <ChevronLeft size={20} /> Previous
+          </button>
+          
+          <div className="reader-progress">
+            <span className="page-indicator">Page {currentPage} of {totalPages}</span>
+            <div className="progress-bar-track">
+              <div 
+                className="progress-bar-fill" 
+                style={{ width: `${(currentPage / totalPages) * 100}%` }}
+              ></div>
+            </div>
+          </div>
+
+          <button 
+            className="footer-nav-btn" 
+            onClick={handleNextPage} 
+            disabled={currentPage === totalPages}
+          >
+            Next <ChevronRight size={20} />
+          </button>
+        </footer>
+      </div>
+    </div>
+  )
+}
