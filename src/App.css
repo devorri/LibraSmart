@@ -1148,14 +1148,22 @@ p {
   background: rgba(15, 23, 32, 0.42);
 }
 
-.modal-card,
-.modal-login-card {
+.modal-card {
   position: relative;
   width: min(640px, 100%);
   max-height: min(88vh, 820px);
   overflow: auto;
   border-radius: 8px;
   background: #ffffff;
+}
+
+.modal-login-card {
+  position: relative;
+  width: fit-content;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 32px);
+  overflow: visible;
+  background: transparent;
 }
 
 .modal-card {
@@ -1184,9 +1192,10 @@ p {
 
 .modal-login-close {
   position: absolute;
-  top: 12px;
-  right: 12px;
+  top: -12px;
+  right: -12px;
   z-index: 2;
+  box-shadow: var(--shadow-soft);
 }
 
 .modal-form,
@@ -1199,6 +1208,13 @@ p {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 12px;
+}
+
+@media (max-width: 600px) {
+  .form-row-2 {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
 }
 
 .form-group {
@@ -1219,23 +1235,36 @@ p {
 }
 
 .login-container {
-  padding: 24px;
+  padding: 0;
 }
 
 .login-card {
-  border: 0;
-  box-shadow: none;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface);
+  box-shadow: var(--shadow-soft);
+  padding: 48px;
+  max-width: 500px;
+  width: min(500px, calc(100vw - 32px));
 }
 
 .login-header {
-  margin-bottom: 18px;
+  margin-bottom: 24px;
   text-align: center;
 }
 
+.login-header h2 {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--color-primary);
+  margin: 12px 0 0 0;
+}
+
 .login-logo {
-  width: 72px;
-  height: 72px;
+  width: 64px;
+  height: 64px;
   object-fit: contain;
+  margin-bottom: 8px;
 }
 
 .login-subtitle,
@@ -1243,6 +1272,26 @@ p {
 .login-toggle {
   color: var(--color-text-muted);
   font-size: 0.88rem;
+}
+
+.login-subtitle {
+  margin: 8px 0 0 0;
+  font-size: 0.85rem;
+}
+
+.login-subtitle strong {
+  display: block;
+  color: var(--color-primary);
+  font-weight: 700;
+  margin-top: 4px;
+}
+
+.login-tip {
+  margin-top: 12px;
+  padding: 10px 12px;
+  background: var(--color-primary-soft);
+  border-radius: 7px;
+  border-left: none;
 }
 
 .login-alert {
@@ -1264,6 +1313,26 @@ p {
 
 .login-btn {
   width: 100%;
+}
+
+.login-toggle {
+  margin-top: 16px;
+  text-align: center;
+  font-size: 0.9rem;
+}
+
+.login-toggle button {
+  background: none;
+  border: none;
+  color: var(--color-primary);
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+  padding: 0;
+}
+
+.login-toggle button:hover {
+  text-decoration: underline;
 }
 
 /* QR */
