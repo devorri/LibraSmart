@@ -4,6 +4,8 @@
 
 -- Drop existing tables if they exist to start fresh (in reverse order of dependencies)
 DROP TABLE IF EXISTS notifications CASCADE;
+DROP TABLE IF EXISTS reports CASCADE;
+DROP TABLE IF EXISTS recommendations CASCADE;
 DROP TABLE IF EXISTS library_logs CASCADE;
 DROP TABLE IF EXISTS transactions CASCADE;
 DROP TABLE IF EXISTS books CASCADE;
@@ -54,7 +56,16 @@ CREATE TABLE library_logs (
     timestamp TIMESTAMPTZ DEFAULT now()
 );
 
--- 5. NOTIFICATION TABLE (SMS Queue)
+-- 5. RECOMMENDATION TABLE (AI / Popular / Similar suggestions)
+CREATE TABLE recommendations (
+    recommendation_id SERIAL PRIMARY KEY,
+    user_id INT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    book_id INT NOT NULL REFERENCES books(book_id) ON DELETE CASCADE,
+    recommendation_type VARCHAR(50) DEFAULT 'AI' CHECK (recommendation_type IN ('AI', 'Popular', 'Similar')),
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- 6. NOTIFICATION TABLE (SMS Queue)
 CREATE TABLE notifications (
     notification_id SERIAL PRIMARY KEY,
     user_id INT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
@@ -65,6 +76,15 @@ CREATE TABLE notifications (
     date_sent TIMESTAMPTZ DEFAULT now()
 );
 
+-- 7. REPORT TABLE (Generated report records)
+CREATE TABLE reports (
+    report_id SERIAL PRIMARY KEY,
+    user_id INT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    report_type VARCHAR(50) NOT NULL,
+    date_generated TIMESTAMPTZ DEFAULT now(),
+    file_url VARCHAR(255) DEFAULT NULL
+);
+
 -- ENABLE ROW LEVEL SECURITY BYPASS OR BYPASS WITH DEFAULTS FOR DEMO
 -- Because we are connecting via client with Anon Key, let's enable full access to these tables.
 -- Alternatively, in Supabase, you can turn off RLS for these tables or add public policies.
@@ -72,7 +92,9 @@ ALTER TABLE users DISABLE ROW LEVEL SECURITY;
 ALTER TABLE books DISABLE ROW LEVEL SECURITY;
 ALTER TABLE transactions DISABLE ROW LEVEL SECURITY;
 ALTER TABLE library_logs DISABLE ROW LEVEL SECURITY;
+ALTER TABLE recommendations DISABLE ROW LEVEL SECURITY;
 ALTER TABLE notifications DISABLE ROW LEVEL SECURITY;
+ALTER TABLE reports DISABLE ROW LEVEL SECURITY;
 
 -- INITIAL SEEDING DATA
 
@@ -111,5 +133,17 @@ INSERT INTO library_logs (user_id, type, timestamp) VALUES
 
 -- Seed Notifications
 INSERT INTO notifications (user_id, phone_number, message, notification_type, status, date_sent) VALUES
-(1, '+639123456789', 'LibraSmart Alert: The book "Research Methods in Computing" was borrowed by you and is now OVERDUE since May 24, 2025. Please return it to avoid penalty.', 'Overdue', 'Sent', now() - INTERVAL '1 day'),
-(2, '+639234567890', 'LibraSmart Alert: You have borrowed "Web Systems Design & Development". Due date is June 03, 2025.', 'Transaction', 'Sent', now() - INTERVAL '5 days');
+(1, '+639123456789', 'LibraSmart Alert: The book "Research Methods in Computing" was borrowed by you and is now OVERDUE. Please return it to avoid penalty.', 'Overdue', 'Sent', now() - INTERVAL '1 day'),
+(2, '+639234567890', 'LibraSmart Alert: You have borrowed "Web Systems Design & Development". Please monitor your due date in LibraSmart.', 'Transaction', 'Sent', now() - INTERVAL '5 days');
+
+-- Seed Recommendations
+INSERT INTO recommendations (user_id, book_id, recommendation_type) VALUES
+(1, 2, 'AI'),
+(2, 7, 'Similar'),
+(6, 6, 'Popular');
+
+-- Seed Generated Report Records
+INSERT INTO reports (user_id, report_type, file_url) VALUES
+(4, 'Book Inventory Masterlist', NULL),
+(3, 'Borrowed Books and Transactions', NULL),
+(3, 'Overdue Books and SMS Follow-up', NULL);

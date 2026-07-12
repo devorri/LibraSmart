@@ -148,10 +148,6 @@ export function Login({ onLoginSuccess }: LoginProps) {
                 Create one here
               </button>
             </div>
-
-            <div className="login-tip">
-              <small>Demo Logins: <strong>marlon</strong> / <strong>ryanjay</strong> (Student), <strong>librarian</strong> (Librarian), <strong>admin</strong> (Admin). Password: <strong>password123</strong></small>
-            </div>
           </form>
         ) : (
           <form onSubmit={handleRegister} className="login-form">

@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { Login } from './components/Login'
 import { SMSPhoneSimulator } from './components/SMSPhoneSimulator'
 import { EbookReader } from './components/EbookReader'
@@ -8,13 +8,18 @@ import './App.css'
 import {
   fetchBooks,
   addBook,
+  updateBook,
   deleteBook,
   fetchTransactions,
   createTransaction,
   approveTransaction,
   returnBookTransaction,
   queueNotification,
-  isUsingMock
+  isUsingMock,
+  uploadBookCover,
+  uploadProfilePhoto,
+  updateUser,
+  uploadEbookFile
 } from './lib/supabase'
 
 import {
@@ -35,7 +40,13 @@ import {
   UserCheck,
   X,
   Compass,
-  ShoppingBag
+  ShoppingBag,
+  Pencil,
+  Camera,
+  Upload,
+  ImagePlus,
+  AlertTriangle,
+  History
 } from 'lucide-react'
 
 type View = 'overview' | 'catalog' | 'ai' | 'analytics' | 'reports' | 'qr' | 'storefront'
@@ -45,6 +56,7 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null)
   const [view, setView] = useState<View>('storefront')
   const [showLoginModal, setShowLoginModal] = useState(false)
+  const [storeTab, setStoreTab] = useState<'home' | 'catalog'>('home')
 
   // Database Data States
   const [books, setBooks] = useState<Book[]>([])
@@ -65,6 +77,21 @@ export default function App() {
   const [newBookRelevance, setNewBookRelevance] = useState('BSIT')
   const [newBookStatus, setNewBookStatus] = useState<'Available' | 'E-book'>('Available')
   const [newBookContent, setNewBookContent] = useState('')
+  const [newBookCoverUrl, setNewBookCoverUrl] = useState('')   // existing URL (for edit mode)
+  const [newBookCoverFile, setNewBookCoverFile] = useState<File | null>(null)  // new upload file
+  const [newBookCoverPreview, setNewBookCoverPreview] = useState<string>('')   // local preview
+  const [isUploadingCover, setIsUploadingCover] = useState(false)
+  const [newBookTotalCopies, setNewBookTotalCopies] = useState<number>(1)
+  const [editingBookId, setEditingBookId] = useState<number | null>(null)
+
+  // Profile photo upload
+  const [isUploadingAvatar, setIsUploadingAvatar] = useState(false)
+  const [newBookEbookFile, setNewBookEbookFile] = useState<File | null>(null)
+  const [newBookEbookUrl, setNewBookEbookUrl] = useState<string>('')
+  const [isUploadingEbook, setIsUploadingEbook] = useState(false)
+  const profilePhotoInputRef = useRef<HTMLInputElement>(null)
+  const coverFileInputRef = useRef<HTMLInputElement>(null)
+  const ebookFileInputRef = useRef<HTMLInputElement>(null)
 
   // Load all books & transactions from Supabase
   const loadDatabaseData = async () => {
@@ -88,6 +115,7 @@ export default function App() {
   const handleLogout = () => {
     setCurrentUser(null)
     setView('storefront')
+    setStoreTab('home')
   }
 
   // -------------------------------------------------------------
@@ -101,32 +129,133 @@ export default function App() {
   // -------------------------------------------------------------
   // LIBRARIAN ACTIONS
   // -------------------------------------------------------------
-  const handleAddBook = async (e: React.FormEvent) => {
+  const resetBookForm = () => {
+    setEditingBookId(null)
+    setNewBookTitle('')
+    setNewBookAuthor('')
+    setNewBookIsbn('')
+    setNewBookCategory('Information Technology')
+    setNewBookRelevance('BSIT')
+    setNewBookStatus('Available')
+    setNewBookContent('')
+    setNewBookCoverUrl('')
+    setNewBookCoverFile(null)
+    setNewBookCoverPreview('')
+    setNewBookTotalCopies(1)
+    setNewBookEbookFile(null)
+    setNewBookEbookUrl('')
+    if (coverFileInputRef.current) coverFileInputRef.current.value = ''
+    if (ebookFileInputRef.current) ebookFileInputRef.current.value = ''
+  }
+
+  const handleOpenAddBook = () => {
+    resetBookForm()
+    setIsAddBookOpen(true)
+  }
+
+  const handleOpenEditBook = (book: Book) => {
+    setEditingBookId(book.book_id)
+    setNewBookTitle(book.title)
+    setNewBookAuthor(book.author)
+    setNewBookIsbn(book.isbn)
+    setNewBookCategory(book.category)
+    setNewBookRelevance(book.program_strand_relevance || 'General')
+    setNewBookStatus(book.status === 'E-book' ? 'E-book' : 'Available')
+    setNewBookContent(book.content || '')
+    setNewBookCoverUrl(book.cover_image_url || '')
+    setNewBookCoverPreview(book.cover_image_url || '')
+    setNewBookCoverFile(null)
+    setNewBookTotalCopies(book.total_copies ?? 1)
+    setNewBookEbookUrl(book.ebook_url || '')
+    setNewBookEbookFile(null)
+    setIsAddBookOpen(true)
+  }
+
+  const handleSaveBook = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!newBookTitle || !newBookAuthor || !newBookIsbn) return
 
-    const added = await addBook({
+    let finalCoverUrl = newBookCoverUrl || null
+
+    // If the admin selected a new cover file, upload it first
+    if (newBookCoverFile && newBookIsbn) {
+      setIsUploadingCover(true)
+      const uploaded = await uploadBookCover(newBookCoverFile, newBookIsbn)
+      setIsUploadingCover(false)
+      if (uploaded) {
+        finalCoverUrl = uploaded
+      } else {
+        alert('Cover image upload failed. Please check your Supabase bucket permissions and try again.')
+        return
+      }
+    }
+
+    let totalCopies = newBookTotalCopies
+    let availableCopies = newBookTotalCopies
+
+    if (editingBookId) {
+      const existingBook = books.find(b => b.book_id === editingBookId)
+      if (existingBook) {
+        const borrowedCount = Math.max(0, (existingBook.total_copies ?? 1) - (existingBook.available_copies ?? 1))
+        availableCopies = Math.max(0, totalCopies - borrowedCount)
+      }
+    }
+
+    let finalEbookUrl = newBookStatus === 'E-book' ? newBookEbookUrl : null
+
+    // If the admin selected a new ebook file, upload it
+    if (newBookStatus === 'E-book' && newBookEbookFile && newBookIsbn) {
+      setIsUploadingEbook(true)
+      const uploaded = await uploadEbookFile(newBookEbookFile, newBookIsbn)
+      setIsUploadingEbook(false)
+      if (uploaded) {
+        finalEbookUrl = uploaded
+      } else {
+        alert('E-book PDF file upload failed. Please try again.')
+        return
+      }
+    }
+
+    const bookPayload = {
       title: newBookTitle,
       author: newBookAuthor,
       isbn: newBookIsbn,
       category: newBookCategory,
       program_strand_relevance: newBookRelevance,
-      status: newBookStatus,
-      ebook_url: newBookStatus === 'E-book' ? 'https://example.com/books/' + newBookIsbn : null,
-      content: newBookStatus === 'E-book' ? newBookContent : null
-    })
+      status: (newBookStatus === 'E-book' ? 'E-book' : (availableCopies === 0 ? 'Borrowed' : 'Available')) as 'Available' | 'Borrowed' | 'E-book',
+      ebook_url: finalEbookUrl,
+      content: newBookStatus === 'E-book' ? newBookContent : null,
+      cover_image_url: finalCoverUrl,
+      total_copies: newBookStatus === 'E-book' ? 1 : totalCopies,
+      available_copies: newBookStatus === 'E-book' ? 1 : availableCopies
+    }
 
-    if (added) {
+    const saved = editingBookId
+      ? await updateBook(editingBookId, bookPayload)
+      : await addBook(bookPayload)
+
+    if (saved) {
       setIsAddBookOpen(false)
-      // Reset Form
-      setNewBookTitle('')
-      setNewBookAuthor('')
-      setNewBookIsbn('')
-      setNewBookContent('')
+      resetBookForm()
       loadDatabaseData()
     } else {
-      alert('Failed to add book. Check if ISBN is unique.')
+      alert(editingBookId ? 'Failed to update book record.' : 'Failed to add book. Check if ISBN is unique.')
     }
+  }
+
+  // Profile photo upload handler
+  const handleProfilePhotoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file || !currentUser) return
+    setIsUploadingAvatar(true)
+    const url = await uploadProfilePhoto(file, currentUser.user_id)
+    if (url) {
+      await updateUser(currentUser.user_id, { avatar_url: url })
+      setCurrentUser(prev => prev ? { ...prev, avatar_url: url } : prev)
+    } else {
+      alert('Profile photo upload failed. Check your Supabase bucket permissions.')
+    }
+    setIsUploadingAvatar(false)
   }
 
   const handleDeleteBook = async (book_id: number) => {
@@ -181,6 +310,11 @@ export default function App() {
 
     if (book.status !== 'Available') {
       alert('This book is currently unavailable. Try E-books or see recommendations.')
+      return
+    }
+
+    if (book.available_copies !== undefined && book.available_copies <= 0) {
+      alert('All physical copies of this book are currently borrowed. Please wait for a copy to be returned.')
       return
     }
 
@@ -266,6 +400,7 @@ export default function App() {
       const matchSearch = 
         book.title.toLowerCase().includes(query.toLowerCase()) ||
         book.author.toLowerCase().includes(query.toLowerCase()) ||
+        book.isbn.toLowerCase().includes(query.toLowerCase()) ||
         book.category.toLowerCase().includes(query.toLowerCase()) ||
         (book.program_strand_relevance && book.program_strand_relevance.toLowerCase().includes(query.toLowerCase()))
       
@@ -321,14 +456,79 @@ export default function App() {
       overdueCount,
       physicalBorrowed,
       ebookReads,
+      availableBooks: books.filter(b => b.status === 'Available').length,
+      ebookBooks: books.filter(b => b.status === 'E-book').length,
+      requestedCount: transactions.filter(t => t.status === 'Requested').length,
+      returnedCount: transactions.filter(t => t.status === 'Returned').length,
       totalBooks: books.length
     }
   }, [books, transactions])
 
+  const activeTransactions = useMemo(() => {
+    return transactions.filter(t => t.status !== 'Returned')
+  }, [transactions])
+
+  const topDemandBooks = useMemo(() => {
+    const demandMap = transactions.reduce<Record<number, { book: Transaction['books']; count: number }>>((acc, tx) => {
+      if (!tx.books) return acc
+      acc[tx.book_id] = acc[tx.book_id] || { book: tx.books, count: 0 }
+      acc[tx.book_id].count += 1
+      return acc
+    }, {})
+
+    return Object.values(demandMap)
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 3)
+  }, [transactions])
+
+  const roleFocus = useMemo(() => {
+    if (!currentUser) {
+      return {
+        title: 'Public access portal',
+        description: 'Browse the catalog, preview learning resources, and sign in to request books or read e-books.',
+        primary: 'Browse Catalog',
+        secondary: 'Login',
+        primaryView: 'storefront' as View,
+        secondaryView: 'storefront' as View
+      }
+    }
+
+    if (currentUser.role === 'Librarian' || currentUser.role === 'Administrator') {
+      return {
+        title: 'Librarian / Admin Console',
+        description: 'Approve borrowing requests, update returns, monitor overdue books, scan QR entries, and export official reports.',
+        primary: 'Open Catalog',
+        secondary: 'View Reports',
+        primaryView: 'catalog' as View,
+        secondaryView: 'reports' as View
+      }
+    }
+
+    if (currentUser.role === 'Teacher') {
+      return {
+        title: 'Teacher resource support',
+        description: 'Search available materials, read e-books, recommend learning resources for classes, and review AI-matched references by program and level.',
+        primary: 'Find Materials',
+        secondary: 'AI Matches',
+        primaryView: 'catalog' as View,
+        secondaryView: 'ai' as View
+      }
+    }
+
+    return {
+      title: 'Student learning workspace',
+      description: 'Find books matched to your program, request physical copies, read e-books online, and present your QR gate pass.',
+      primary: 'Get Recommendations',
+      secondary: 'My QR Pass',
+      primaryView: 'ai' as View,
+      secondaryView: 'qr' as View
+    }
+  }, [currentUser])
+
   // -------------------------------------------------------------
   // EXPORTABLE REPORTS (CSV Generator)
   // -------------------------------------------------------------
-  const handleExportCSV = (reportType: 'books' | 'transactions' | 'users') => {
+  const handleExportCSV = (reportType: 'books' | 'transactions' | 'overdue' | 'users') => {
     let headers: string[] = []
     let rows: string[][] = []
     const filename = `MPCI_Library_${reportType}_Report.csv`
@@ -355,6 +555,19 @@ export default function App() {
         t.return_date || 'N/A',
         t.status
       ])
+    } else if (reportType === 'overdue') {
+      headers = ['Transaction ID', 'Borrower', 'Book Title', 'Program/Strand', 'Academic Level', 'Due Date', 'Notification Status']
+      rows = transactions
+        .filter(t => t.status === 'Overdue')
+        .map(t => [
+          t.transaction_id.toString(),
+          t.users?.name || 'Unknown',
+          t.books?.title || 'Unknown',
+          t.users?.program_strand || 'General',
+          t.users?.academic_level || 'N/A',
+          t.due_date,
+          'Overdue SMS ready'
+        ])
     } else if (reportType === 'users') {
       headers = ['User ID', 'Name', 'Username', 'Role', 'Strand/Department', 'Level', 'Phone Number']
       rows = transactions
@@ -399,10 +612,20 @@ export default function App() {
           </div>
 
           <nav className="public-nav" aria-label="Public pages">
-            <a href="#home">Home</a>
-            <a href="#about">About</a>
-            <a href="#features">Features</a>
-            <a href="#catalog">Catalog</a>
+            <a 
+              href="#home" 
+              className={storeTab === 'home' ? 'active' : ''} 
+              onClick={(e) => { e.preventDefault(); setStoreTab('home'); }}
+            >
+              Home
+            </a>
+            <a 
+              href="#catalog" 
+              className={storeTab === 'catalog' ? 'active' : ''} 
+              onClick={(e) => { e.preventDefault(); setStoreTab('catalog'); }}
+            >
+              Catalog
+            </a>
           </nav>
           
           <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
@@ -427,256 +650,291 @@ export default function App() {
         <div style={{ padding: '30px clamp(15px, 4vw, 50px)' }}>
           <div className="storefront-wrapper">
             
-            <section className="store-hero" id="home">
-              <p className="eyebrow">Matalam Polytechnic College Inc. Library</p>
-              <h1>Smarter library access for students, teachers, and librarians.</h1>
-              <p>
-                LibraSmart modernizes MPCI library operations with online catalog search,
-                e-book reading, AI-based book recommendations, QR entry and exit tracking,
-                SMS notifications, and real-time analytics.
-              </p>
-
-              <div className="store-hero-actions">
-                <a className="btn-primary" href="#catalog">Browse catalog</a>
-                <button className="btn-secondary" onClick={() => setShowLoginModal(true)}>
-                  Login
-                </button>
-              </div>
-
-              <div className="public-stats" aria-label="LibraSmart highlights">
-                <div>
-                  <strong>AI</strong>
-                  <span>Personal book recommendations</span>
-                </div>
-                <div>
-                  <strong>QR</strong>
-                  <span>Library entry and exit records</span>
-                </div>
-                <div>
-                  <strong>SMS</strong>
-                  <span>Borrowing and overdue alerts</span>
-                </div>
-                <div>
-                  <strong>PDF</strong>
-                  <span>Downloadable library reports</span>
-                </div>
-              </div>
-              
-              <div className="public-hero-preview" aria-label="LibraSmart preview">
-                <img src="/librasmart-logo-1024.png" alt="LibraSmart logo" />
-                <div>
-                  <span>Today</span>
-                  <strong>47 active transactions</strong>
-                  <small>Catalog, SMS, QR gate, and analytics synced</small>
-                </div>
-              </div>
-            </section>
-
-            <section className="public-section public-split" id="about">
-              <div>
-                <p className="eyebrow">About the system</p>
-                <h2>Built from the library problems identified in the study.</h2>
-              </div>
-              <p>
-                The system addresses manual logbooks, shelf-by-shelf book searching,
-                slow borrowing records, difficult overdue tracking, and limited
-                visibility into borrowing trends. It gives MPCI a single web-based
-                workspace for students, teachers, librarians, and administrators.
-              </p>
-            </section>
-
-            <section className="public-section" id="features">
-              <div className="public-section-heading">
-                <p className="eyebrow">Core features</p>
-                <h2>Everything the library desk needs, without the clutter.</h2>
-              </div>
-
-              <div className="public-feature-grid">
-                <article>
-                  <BookOpen size={20} />
-                  <h3>Book Catalog Management</h3>
-                  <p>Add, update, search, and monitor physical and digital books by title, author, ISBN, category, and program relevance.</p>
-                </article>
-                <article>
-                  <Sparkles size={20} />
-                  <h3>AI Recommendations</h3>
-                  <p>Suggest learning materials based on academic strand, level, borrowing history, and similar student activity.</p>
-                </article>
-                <article>
-                  <BookMarked size={20} />
-                  <h3>E-book Reading</h3>
-                  <p>Let users access selected learning materials online while still supporting physical book release at the library counter.</p>
-                </article>
-                <article>
-                  <Smartphone size={20} />
-                  <h3>SMS Notifications</h3>
-                  <p>Send transaction confirmations, due date reminders, and overdue notices directly to the borrower.</p>
-                </article>
-                <article>
-                  <QrCode size={20} />
-                  <h3>QR Entry and Exit</h3>
-                  <p>Replace manual gate logs with scannable user passes for faster visit monitoring.</p>
-                </article>
-                <article>
-                  <TrendingUp size={20} />
-                  <h3>Analytics and Reports</h3>
-                  <p>Track high-demand books, borrowing trends, user activity, and export reports for documentation.</p>
-                </article>
-              </div>
-            </section>
-
-            <section className="public-section">
-              <div className="public-section-heading">
-                <p className="eyebrow">How it works</p>
-                <h2>Simple flow from discovery to report generation.</h2>
-              </div>
-
-              <div className="public-steps">
-                <div>
-                  <span>01</span>
-                  <strong>Search or scan</strong>
-                  <p>Students find books online, while QR passes record library entry and exit.</p>
-                </div>
-                <div>
-                  <span>02</span>
-                  <strong>Borrow or read</strong>
-                  <p>Physical books are requested online and released on site; e-books open immediately.</p>
-                </div>
-                <div>
-                  <span>03</span>
-                  <strong>Notify and analyze</strong>
-                  <p>SMS alerts, transaction history, analytics, and reports keep operations transparent.</p>
-                </div>
-              </div>
-            </section>
-
-            <section className="store-grid-section" id="catalog">
-              <div className="catalog-heading-row">
-                <div>
-                  <p className="eyebrow">Library catalog</p>
-                  <h3>Browse available books and e-books</h3>
-                </div>
-              </div>
-
-              <div className="store-search-bar">
-                <Search size={20} />
-                <input 
-                  type="text" 
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Search by title, author, course code, strand..." 
-                />
-              </div>
-
-              {/* Tag filters pill */}
-              <div className="filter-tags-row">
-                {categoriesList.map(category => (
-                  <button 
-                    key={category} 
-                    className={`tag-pill ${selectedCategory === category ? 'active' : ''}`}
-                    onClick={() => setSelectedCategory(category)}
-                  >
-                    {category}
-                  </button>
-                ))}
-              </div>
-            </section>
-
-            {/* AI PUBLIC CORNER (When logged in) */}
-            {currentUser && (
-              <section className="store-grid-section">
-                <h3>Recommended For You (AI-Matching)</h3>
-                <div className="ai-recommendations-list" style={{ marginBottom: '30px' }}>
-                  {aiRecommendations.map(({ book, reason, type }) => (
-                    <div key={book.book_id} className="ai-rec-card" style={{ borderLeft: '4px solid var(--color-primary)' }}>
-                      <span className="ai-badge-header">{type}</span>
-                      <h4 style={{ fontSize: '0.98rem' }}>{book.title}</h4>
-                      <span className="author" style={{ fontSize: '0.78rem' }}>By {book.author}</span>
-                      <p style={{ fontSize: '0.78rem', margin: '8px 0', color: 'var(--color-text-muted)' }}>{reason}</p>
-                      <div className="book-action-grid">
-                        <button
-                          className="btn-primary"
-                          onClick={() => handleBorrowOnline(book)}
-                          disabled={book.status !== 'E-book'}
-                        >
-                          Borrow Online
-                        </button>
-                        <button
-                          className="btn-secondary"
-                          onClick={() => handleRequestBorrow(book)}
-                          disabled={book.status !== 'Available'}
-                        >
-                          Borrow Physical
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </section>
-            )}
-
-            {/* MAIN E-COMMERCE PRODUCTS GRID */}
-            <section className="store-grid-section">
-              <h3>Catalog results ({filteredBooks.length})</h3>
-              
-              <div className="store-grid">
-                {filteredBooks.length === 0 ? (
-                  <p className="empty-msg" style={{ gridColumn: 'span 4' }}>
-                    No matching books found. Try searching for "design", "IT", or "CCNA".
+            {storeTab === 'home' ? (
+              <>
+                <section className="store-hero" id="home">
+                  <p className="eyebrow">Matalam Polytechnic College Inc. Library</p>
+                  <h1>LibraSmart Library Management System</h1>
+                  <p>
+                    Web-based library management with AI-based book recommendation,
+                    e-book access, analytics, SMS notification, automated reports,
+                    and QR-code entry and exit tracking for Matalam Polytechnic College Inc.
                   </p>
-                ) : (
-                  filteredBooks.map((book, index) => (
-                    <div key={book.book_id} className="book-store-card">
-                      {/* CSS gradient book cover */}
-                      <div className={`book-cover-stage ${getCoverClass(index)}`}>
-                        <span className="cover-title">{book.title}</span>
-                        <span className="cover-author">{book.author}</span>
-                      </div>
 
-                      {/* Info layout */}
-                      <div className="book-store-info">
-                        <span className="book-category-tag">{book.category}</span>
-                        <h4>{book.title}</h4>
-                        <span className="book-author">By {book.author}</span>
-                        
-                        {/* Status elements */}
-                        <div className="book-status-row">
-                          <span className={`badge ${
-                            book.status === 'Available' 
-                              ? 'badge-success' 
-                              : book.status === 'E-book' 
-                              ? 'badge-info' 
-                              : 'badge-warning'
-                          }`}>
-                            {book.status}
-                          </span>
-                          <span style={{ fontSize: '0.72rem', fontWeight: '800', color: 'var(--color-text-muted)' }}>
-                            ISBN: {book.isbn}
-                          </span>
-                        </div>
+                  <div className="store-hero-actions">
+                    <button className="btn-primary" onClick={() => setStoreTab('catalog')}>Browse catalog</button>
+                    <button className="btn-secondary" onClick={() => setShowLoginModal(true)}>
+                      Login
+                    </button>
+                  </div>
 
-                        <div className="book-action-grid">
-                          <button
-                            className="btn-primary"
-                            onClick={() => handleBorrowOnline(book)}
-                            disabled={book.status !== 'E-book'}
-                          >
-                            Borrow Online
-                          </button>
-                          <button
-                            className="btn-secondary"
-                            onClick={() => handleRequestBorrow(book)}
-                            disabled={book.status !== 'Available'}
-                          >
-                            Borrow Physical
-                          </button>
-                        </div>
-                      </div>
+                  <div className="public-stats" aria-label="LibraSmart highlights">
+                    <div>
+                      <strong>{analyticsData.totalBooks}</strong>
+                      <span>Catalogued print and digital resources</span>
                     </div>
-                  ))
+                    <div>
+                      <strong>{analyticsData.availableBooks}</strong>
+                      <span>Currently available shelf books</span>
+                    </div>
+                    <div>
+                      <strong>{analyticsData.ebookBooks}</strong>
+                      <span>Online e-book materials ready to read</span>
+                    </div>
+                    <div>
+                      <strong>{activeTransactions.length}</strong>
+                      <span>Active borrowing and return records</span>
+                    </div>
+                  </div>
+                  
+                  <div className="public-hero-preview" aria-label="LibraSmart preview">
+                    <img src="/librasmart-logo-1024.png" alt="LibraSmart logo" />
+                    <div>
+                      <span>Today</span>
+                      <strong>{activeTransactions.length} active transactions</strong>
+                      <small>Catalog, SMS, QR gate, and analytics synced</small>
+                    </div>
+                  </div>
+                </section>
+
+                <section className="public-section public-split" id="about">
+                  <div>
+                    <p className="eyebrow">About the system</p>
+                    <h2>Built from the library problems identified in the study.</h2>
+                  </div>
+                  <p>
+                    The system addresses manual user records, shelf-by-shelf book searching,
+                    slow borrowing and returning records, difficult overdue monitoring,
+                    and limited visibility into borrowing trends, high-demand books,
+                    and student reading behavior.
+                  </p>
+                </section>
+
+                <section className="public-section" id="features">
+                  <div className="public-section-heading">
+                    <p className="eyebrow">Core features</p>
+                    <h2>Everything the library desk needs, without the clutter.</h2>
+                  </div>
+
+                  <div className="public-feature-grid">
+                    <article>
+                      <BookOpen size={20} />
+                      <h3>Book Catalog Management</h3>
+                      <p>Add, edit, delete, search, and monitor books by title, author, ISBN, category, academic level, and program or strand relevance.</p>
+                    </article>
+                    <article>
+                      <Sparkles size={20} />
+                      <h3>AI Recommendations</h3>
+                      <p>Suggest learning materials based on academic track, subjects, grade or year level, borrowing history, and popular books.</p>
+                    </article>
+                    <article>
+                      <BookMarked size={20} />
+                      <h3>E-book Reading</h3>
+                      <p>Let users access selected learning materials online while still supporting physical book release at the library counter.</p>
+                    </article>
+                    <article>
+                      <Smartphone size={20} />
+                      <h3>SMS Notifications</h3>
+                      <p>Send transaction confirmations, due date reminders, and overdue notices directly to the borrower.</p>
+                    </article>
+                    <article>
+                      <QrCode size={20} />
+                      <h3>QR Entry and Exit</h3>
+                      <p>Replace manual gate logs with scannable user passes for faster visit monitoring.</p>
+                    </article>
+                    <article>
+                      <TrendingUp size={20} />
+                      <h3>Analytics and Reports</h3>
+                      <p>Track borrowing trends, high-demand books, reading behavior, user activity, and generated reports for documentation.</p>
+                    </article>
+                  </div>
+                </section>
+
+                <section className="public-section">
+                  <div className="public-section-heading">
+                    <p className="eyebrow">How it works</p>
+                    <h2>Simple flow from discovery to report generation.</h2>
+                  </div>
+
+                  <div className="public-steps">
+                    <div>
+                      <span>01</span>
+                      <strong>Search or scan</strong>
+                      <p>Students find books online, while QR passes record library entry and exit.</p>
+                    </div>
+                    <div>
+                      <span>02</span>
+                      <strong>Borrow or read</strong>
+                      <p>Physical books are requested online and released on site; e-books open immediately.</p>
+                    </div>
+                    <div>
+                      <span>03</span>
+                      <strong>Notify and analyze</strong>
+                      <p>SMS alerts, transaction history, analytics, and reports keep operations transparent.</p>
+                    </div>
+                  </div>
+                </section>
+              </>
+            ) : (
+              <>
+                <section className="store-grid-section" id="catalog">
+                  <div className="catalog-heading-row">
+                    <div>
+                      <p className="eyebrow">Library catalog</p>
+                      <h3>Browse available books and e-books</h3>
+                    </div>
+                  </div>
+
+                  <div className="store-search-bar">
+                    <Search size={20} />
+                    <input 
+                      type="text" 
+                      value={query}
+                      onChange={(e) => setQuery(e.target.value)}
+                      placeholder="Search by title, author, ISBN, subject, strand..." 
+                    />
+                  </div>
+
+                  {/* Tag filters pill */}
+                  <div className="filter-tags-row">
+                    {categoriesList.map(category => (
+                      <button 
+                        key={category} 
+                        className={`tag-pill ${selectedCategory === category ? 'active' : ''}`}
+                        onClick={() => setSelectedCategory(category)}
+                      >
+                        {category}
+                      </button>
+                    ))}
+                  </div>
+                </section>
+
+                {/* AI PUBLIC CORNER (When logged in) */}
+                {currentUser && (
+                  <section className="store-grid-section">
+                    <h3>Recommended For You (AI-Matching)</h3>
+                    <div className="ai-recommendations-list" style={{ marginBottom: '30px' }}>
+                      {aiRecommendations.map(({ book, reason, type }) => (
+                        <div key={book.book_id} className="ai-rec-card" style={{ borderLeft: '4px solid var(--color-primary)', display: 'flex', flexDirection: 'column' }}>
+                          <span className="ai-badge-header">{type}</span>
+                          <div style={{ display: 'flex', gap: '12px', padding: '16px 16px 0 16px' }}>
+                            {book.cover_image_url ? (
+                              <img src={book.cover_image_url} alt={book.title} style={{ width: '50px', height: '66px', objectFit: 'cover', borderRadius: '4px', boxShadow: '0 2px 4px rgba(0,0,0,0.15)', flexShrink: 0 }} />
+                            ) : (
+                              <div style={{ width: '50px', height: '66px', borderRadius: '4px', background: 'linear-gradient(135deg, #0a5c63 0%, #1d2e38 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '10px', fontWeight: 'bold', padding: '2px', flexShrink: 0 }}>
+                                MPCI
+                              </div>
+                            )}
+                            <div>
+                              <h4 style={{ fontSize: '0.92rem', margin: '0 0 2px 0' }}>{book.title}</h4>
+                              <span className="author" style={{ fontSize: '0.78rem' }}>By {book.author}</span>
+                            </div>
+                          </div>
+                          <div style={{ padding: '0 16px 16px 16px', display: 'flex', flexDirection: 'column', flexGrow: 1 }}>
+                            <p style={{ fontSize: '0.78rem', margin: '8px 0', color: 'var(--color-text-muted)' }}>{reason}</p>
+                            <div className="book-action-grid" style={{ marginTop: 'auto', paddingTop: '8px' }}>
+                              <button
+                                className="btn-primary"
+                                onClick={() => handleBorrowOnline(book)}
+                                disabled={book.status !== 'E-book'}
+                              >
+                                Borrow Online
+                              </button>
+                              <button
+                                className="btn-secondary"
+                                onClick={() => handleRequestBorrow(book)}
+                                disabled={book.status !== 'Available' || (book.available_copies !== undefined && book.available_copies <= 0)}
+                              >
+                                {book.available_copies === 0 ? 'All Copies Out' : 'Borrow Physical'}
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
                 )}
-              </div>
-            </section>
+
+                {/* MAIN E-COMMERCE PRODUCTS GRID */}
+                <section className="store-grid-section">
+                  <h3>Catalog results ({filteredBooks.length})</h3>
+                  
+                  <div className="store-grid">
+                    {filteredBooks.length === 0 ? (
+                      <p className="empty-msg" style={{ gridColumn: 'span 4' }}>
+                        No matching books found. Try searching for "design", "IT", or "CCNA".
+                      </p>
+                    ) : (
+                      filteredBooks.map((book, index) => (
+                        <div key={book.book_id} className="book-store-card">
+                          {/* CSS gradient or image book cover */}
+                          <div 
+                            className={`book-cover-stage ${getCoverClass(index)}`}
+                            style={book.cover_image_url ? { backgroundImage: `url(${book.cover_image_url})`, backgroundSize: 'cover', backgroundPosition: 'center' } : {}}
+                          >
+                            {!book.cover_image_url && (
+                              <>
+                                <span className="cover-title">{book.title}</span>
+                                <span className="cover-author">{book.author}</span>
+                              </>
+                            )}
+                          </div>
+
+                          {/* Info layout */}
+                          <div className="book-store-info">
+                            <span className="book-category-tag">{book.category}</span>
+                            <h4>{book.title}</h4>
+                            <span className="book-author">By {book.author}</span>
+                            
+                            {/* Status elements */}
+                            <div className="book-status-row">
+                              <span className={`badge ${
+                                book.status === 'Available' 
+                                  ? 'badge-success' 
+                                  : book.status === 'E-book' 
+                                  ? 'badge-info' 
+                                  : 'badge-warning'
+                              }`}>
+                                {book.status}
+                              </span>
+                              <span style={{ fontSize: '0.72rem', fontWeight: '800', color: 'var(--color-text-muted)' }}>
+                                ISBN: {book.isbn}
+                              </span>
+                            </div>
+
+                            {/* Copies availability badge */}
+                            {book.status !== 'E-book' && (
+                              <div className="book-copies-indicator">
+                                <span className={`copies-count-text ${book.available_copies === 0 ? 'out-of-stock' : ''}`}>
+                                  {book.available_copies ?? 0} / {book.total_copies ?? 1} copies available
+                                </span>
+                              </div>
+                            )}
+
+                            <div className="book-action-grid">
+                              <button
+                                className="btn-primary"
+                                onClick={() => handleBorrowOnline(book)}
+                                disabled={book.status !== 'E-book'}
+                              >
+                                Borrow Online
+                              </button>
+                              <button
+                                className="btn-secondary"
+                                onClick={() => handleRequestBorrow(book)}
+                                disabled={book.status !== 'Available' || (book.available_copies !== undefined && book.available_copies <= 0)}
+                              >
+                                {book.available_copies === 0 ? 'All Copies Out' : 'Borrow Physical'}
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </section>
+              </>
+            )}
 
           </div>
         </div>
@@ -726,7 +984,7 @@ export default function App() {
           </button>
           
           {/* Link back to store view */}
-          <button className={(view as string) === 'storefront' ? 'active' : ''} onClick={() => setView('storefront')}>
+          <button className={(view as string) === 'storefront' ? 'active' : ''} onClick={() => { setView('storefront'); setStoreTab('catalog'); }}>
             <ShoppingBag size={18} /> Book Storefront
           </button>
 
@@ -753,12 +1011,36 @@ export default function App() {
         {/* LOGGED IN USER PROFILE FOOTER */}
         <div className="side-profile">
           <div className="profile-card">
-            <div className="profile-avatar">
-              {currentUser.name.charAt(0).toUpperCase()}
+            <div
+              className="profile-avatar-wrap"
+              onClick={() => !isUploadingAvatar && profilePhotoInputRef.current?.click()}
+              title="Click to change profile photo"
+            >
+              {currentUser.avatar_url ? (
+                <img src={currentUser.avatar_url} alt={currentUser.name} className="profile-avatar profile-avatar-img" />
+              ) : (
+                <div className="profile-avatar">
+                  {isUploadingAvatar ? '...' : currentUser.name.charAt(0).toUpperCase()}
+                </div>
+              )}
+              <div className="profile-avatar-edit">
+                <Camera size={10} />
+              </div>
             </div>
+            <input
+              ref={profilePhotoInputRef}
+              type="file"
+              accept="image/*"
+              style={{ display: 'none' }}
+              onChange={handleProfilePhotoChange}
+            />
             <div className="profile-details">
               <span className="profile-name">{currentUser.name}</span>
-              <span className="profile-role">{currentUser.role}</span>
+              <span className="profile-role">
+                {currentUser.role === 'Librarian' || currentUser.role === 'Administrator' 
+                  ? 'Librarian / Admin' 
+                  : currentUser.role}
+              </span>
             </div>
           </div>
           <button className="btn-logout" onClick={handleLogout}>
@@ -791,16 +1073,17 @@ export default function App() {
           <>
             <section className="hero-panel">
               <div className="hero-copy">
+                <p className="eyebrow">{roleFocus.title}</p>
                 <h2>Welcome back, {currentUser.name}!</h2>
                 <p>
-                  Explore MPCI's unified library operations. Search the shelf catalogue, open digital E-books instantly, check active book loan transactions, and display your entry/exit QR gate pass.
+                  {roleFocus.description}
                 </p>
                 <div className="hero-actions">
-                  <button className="btn-primary" onClick={() => setView('storefront')}>
-                    Go to Book Storefront
+                  <button className="btn-primary" onClick={() => setView(roleFocus.primaryView)}>
+                    {roleFocus.primary}
                   </button>
-                  <button className="btn-secondary" onClick={() => setView('qr')}>
-                    Get QR Entry Code
+                  <button className="btn-secondary" onClick={() => setView(roleFocus.secondaryView)}>
+                    {roleFocus.secondary}
                   </button>
                 </div>
               </div>
@@ -991,7 +1274,7 @@ export default function App() {
               </div>
               
               {(currentUser.role === 'Librarian' || currentUser.role === 'Administrator') && (
-                <button className="btn-primary" onClick={() => setIsAddBookOpen(true)}>
+                <button className="btn-primary" onClick={handleOpenAddBook}>
                   <Plus size={16} /> Add Book Record
                 </button>
               )}
@@ -1018,7 +1301,8 @@ export default function App() {
                     <th>ISBN Code</th>
                     <th>Category</th>
                     <th>Academic Strand</th>
-                    <th>Media Status</th>
+                    <th>Copies</th>
+                    <th>Availability Status</th>
                     <th>Shelf Actions</th>
                   </tr>
                 </thead>
@@ -1030,12 +1314,32 @@ export default function App() {
                   ) : (
                     filteredBooks.map((book) => (
                       <tr key={book.book_id}>
-                        <td style={{ fontWeight: '700' }}>{book.title}</td>
+                        <td style={{ fontWeight: '700' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                            {book.cover_image_url ? (
+                              <img src={book.cover_image_url} alt={book.title} style={{ width: '36px', height: '48px', objectFit: 'cover', borderRadius: '4px', boxShadow: '0 1px 3px rgba(0,0,0,0.15)' }} />
+                            ) : (
+                              <div style={{ width: '36px', height: '48px', borderRadius: '4px', background: 'linear-gradient(135deg, #0a5c63 0%, #1d2e38 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '10px', fontWeight: 'bold', textAlign: 'center', padding: '2px' }}>
+                                MPCI
+                              </div>
+                            )}
+                            <span>{book.title}</span>
+                          </div>
+                        </td>
                         <td>{book.author}</td>
                         <td><code>{book.isbn}</code></td>
                         <td>{book.category}</td>
                         <td>
                           <span className="badge badge-info">{book.program_strand_relevance || 'General'}</span>
+                        </td>
+                        <td>
+                          {book.status === 'E-book' ? (
+                            <span style={{ color: 'var(--color-text-muted)', fontSize: '0.82rem' }}>N/A (Digital)</span>
+                          ) : (
+                            <span style={{ fontWeight: 700 }}>
+                              {book.available_copies ?? 0} / {book.total_copies ?? 1}
+                            </span>
+                          )}
                         </td>
                         <td>
                           <span className={`badge ${
@@ -1064,21 +1368,32 @@ export default function App() {
                                   className="btn-secondary"
                                   style={{ padding: '6px 12px', fontSize: '0.8rem' }}
                                   onClick={() => handleRequestBorrow(book)}
-                                  disabled={book.status !== 'Available'}
+                                  disabled={book.status !== 'Available' || (book.available_copies !== undefined && book.available_copies <= 0)}
                                 >
-                                  Borrow Physical
+                                  {book.available_copies === 0 ? 'All Copies Out' : 'Borrow Physical'}
                                 </button>
                               </>
                             )}
 
                             {(currentUser.role === 'Librarian' || currentUser.role === 'Administrator') && (
-                              <button 
-                                className="btn-secondary" 
-                                style={{ padding: '6px 12px', fontSize: '0.8rem', color: '#dc2626' }}
-                                onClick={() => handleDeleteBook(book.book_id)}
-                              >
-                                <Trash2 size={14} />
-                              </button>
+                              <>
+                                <button
+                                  className="btn-secondary"
+                                  style={{ padding: '6px 12px', fontSize: '0.8rem' }}
+                                  onClick={() => handleOpenEditBook(book)}
+                                  title="Edit book record"
+                                >
+                                  <Pencil size={14} /> Edit
+                                </button>
+                                <button 
+                                  className="btn-secondary" 
+                                  style={{ padding: '6px 12px', fontSize: '0.8rem', color: '#dc2626' }}
+                                  onClick={() => handleDeleteBook(book.book_id)}
+                                  title="Delete book record"
+                                >
+                                  <Trash2 size={14} />
+                                </button>
+                              </>
                             )}
                           </div>
                         </td>
@@ -1113,15 +1428,26 @@ export default function App() {
                 <p className="empty-msg">No recommendations available. Fill out your program strand or borrow books to seed recommendations.</p>
               ) : (
                 aiRecommendations.map(({ book, reason, type }) => (
-                  <div key={book.book_id} className="ai-rec-card">
+                  <div key={book.book_id} className="ai-rec-card" style={{ display: 'flex', flexDirection: 'column' }}>
                     <span className="ai-badge-header">{type}</span>
-                    <h4>{book.title}</h4>
-                    <span className="author">By {book.author}</span>
-                    <div className="explanation">
+                    <div style={{ display: 'flex', gap: '14px', padding: '16px 16px 0 16px' }}>
+                      {book.cover_image_url ? (
+                        <img src={book.cover_image_url} alt={book.title} style={{ width: '60px', height: '80px', objectFit: 'cover', borderRadius: '6px', boxShadow: '0 2px 5px rgba(0,0,0,0.2)', flexShrink: 0 }} />
+                      ) : (
+                        <div style={{ width: '60px', height: '80px', borderRadius: '6px', background: 'linear-gradient(135deg, #0a5c63 0%, #1d2e38 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '12px', fontWeight: 'bold', textAlign: 'center', padding: '4px', flexShrink: 0 }}>
+                          Book
+                        </div>
+                      )}
+                      <div>
+                        <h4 style={{ margin: '0 0 4px 0', fontSize: '1rem', lineHeight: '1.2' }}>{book.title}</h4>
+                        <span className="author">By {book.author}</span>
+                      </div>
+                    </div>
+                    <div className="explanation" style={{ padding: '0 16px 16px 16px', marginTop: '12px', fontSize: '0.85rem', color: 'var(--color-text-muted)', borderBottom: '1px solid var(--color-border)', flexGrow: 1 }}>
                       {reason}
                     </div>
                     
-                    <div className="book-action-grid" style={{ marginTop: 'auto' }}>
+                    <div className="book-action-grid" style={{ padding: '12px 16px 16px 16px' }}>
                       <button
                         className="btn-primary"
                         onClick={() => handleBorrowOnline(book)}
@@ -1150,121 +1476,267 @@ export default function App() {
         )}
 
         {/* VIEW ANALYTICS */}
-        {view === 'analytics' && (
-          <>
-            {/* Visual Charts Container */}
-            <div className="analytics-card-grid">
-              
-              {/* Chart 1: Bar Chart (SVG-based) */}
-              <div className="panel-card">
-                <div className="panel-card-header">
-                  <div className="panel-title">
-                    <TrendingUp size={20} />
-                    <h3>Borrowing Trends by Academic Program</h3>
+        {view === 'analytics' && (() => {
+          // Compute dynamic chart values
+          const totalTx = analyticsData.totalBorrows || 1
+          const strandEntries = Object.entries(analyticsData.strandBorrows) as [string, number][]
+          const maxStrand = Math.max(...strandEntries.map(([, v]) => v), 1)
+          const strandColors: Record<string, string> = { BSIT: '#0f7581', BSA: '#f2bd4a', BSBA: '#102131', BSED: '#ef4444', SHS: '#10b981' }
+
+          // Status breakdown for donut
+          const availPct = books.length ? Math.round((analyticsData.availableBooks / books.length) * 100) : 0
+          const borrowedPct = books.length ? Math.round((analyticsData.physicalBorrowed / books.length) * 100) : 0
+          const ebookPct = books.length ? Math.round((analyticsData.ebookBooks / books.length) * 100) : 0
+
+          // Donut segment calculations (circumference = 2 * PI * 70 ≈ 440)
+          const circ = 440
+          const seg1 = (availPct / 100) * circ
+          const seg2 = (borrowedPct / 100) * circ
+          const seg3 = (ebookPct / 100) * circ
+
+          // Category usage counts
+          const catUsage: Record<string, number> = {}
+          transactions.forEach(t => {
+            if (t.books?.category) {
+              catUsage[t.books.category] = (catUsage[t.books.category] || 0) + 1
+            }
+          })
+          const catEntries = Object.entries(catUsage).sort((a, b) => b[1] - a[1])
+          const maxCat = Math.max(...catEntries.map(([, v]) => v), 1)
+
+          // Recent activity (last 8 transactions)
+          const recentTx = [...transactions].sort((a, b) =>
+            new Date(b.borrow_date).getTime() - new Date(a.borrow_date).getTime()
+          ).slice(0, 8)
+
+          return (
+            <>
+              {/* Stat Summary Cards */}
+              <div className="analytics-stats-row">
+                <div className="analytics-stat-card stat-primary">
+                  <div className="stat-icon-ring"><BookOpen size={22} /></div>
+                  <div className="stat-content">
+                    <span className="stat-value">{analyticsData.totalBooks}</span>
+                    <span className="stat-label">Total Books</span>
                   </div>
                 </div>
-
-                <div className="svg-chart-container">
-                  <svg className="chart-svg" width="360" height="200" viewBox="0 0 360 200">
-                    <line x1="40" y1="20" x2="340" y2="20" stroke="#f1f5f9" strokeWidth="1.5" />
-                    <line x1="40" y1="70" x2="340" y2="70" stroke="#f1f5f9" strokeWidth="1.5" />
-                    <line x1="40" y1="120" x2="340" y2="120" stroke="#f1f5f9" strokeWidth="1.5" />
-                    <line x1="40" y1="170" x2="340" y2="170" stroke="#cbd5e1" strokeWidth="1.5" />
-
-                    {/* BSIT */}
-                    <rect x="60" y={170 - analyticsData.strandBorrows.BSIT * 20} width="32" height={analyticsData.strandBorrows.BSIT * 20} fill="#0f7581" rx="4" />
-                    <text x="76" y="188" fontSize="10" fontWeight="700" fill="#64748b" textAnchor="middle">BSIT</text>
-                    <text x="76" y={160 - analyticsData.strandBorrows.BSIT * 20} fontSize="11" fontWeight="800" fill="#102131" textAnchor="middle">{analyticsData.strandBorrows.BSIT}</text>
-
-                    {/* BSA */}
-                    <rect x="120" y={170 - analyticsData.strandBorrows.BSA * 20} width="32" height={analyticsData.strandBorrows.BSA * 20} fill="#f2bd4a" rx="4" />
-                    <text x="136" y="188" fontSize="10" fontWeight="700" fill="#64748b" textAnchor="middle">BSA</text>
-                    <text x="136" y={160 - analyticsData.strandBorrows.BSA * 20} fontSize="11" fontWeight="800" fill="#102131" textAnchor="middle">{analyticsData.strandBorrows.BSA}</text>
-
-                    {/* BSBA */}
-                    <rect x="180" y={170 - analyticsData.strandBorrows.BSBA * 20} width="32" height={analyticsData.strandBorrows.BSBA * 20} fill="#102131" rx="4" />
-                    <text x="196" y="188" fontSize="10" fontWeight="700" fill="#64748b" textAnchor="middle">BSBA</text>
-                    <text x="196" y={160 - analyticsData.strandBorrows.BSBA * 20} fontSize="11" fontWeight="800" fill="#102131" textAnchor="middle">{analyticsData.strandBorrows.BSBA}</text>
-
-                    {/* BSED */}
-                    <rect x="240" y={170 - analyticsData.strandBorrows.BSED * 20} width="32" height={analyticsData.strandBorrows.BSED * 20} fill="#ef4444" rx="4" />
-                    <text x="256" y="188" fontSize="10" fontWeight="700" fill="#64748b" textAnchor="middle">BSED</text>
-                    <text x="256" y={160 - analyticsData.strandBorrows.BSED * 20} fontSize="11" fontWeight="800" fill="#102131" textAnchor="middle">{analyticsData.strandBorrows.BSED}</text>
-
-                    {/* SHS */}
-                    <rect x="300" y={170 - analyticsData.strandBorrows.SHS * 20} width="32" height={analyticsData.strandBorrows.SHS * 20} fill="#10b981" rx="4" />
-                    <text x="316" y="188" fontSize="10" fontWeight="700" fill="#64748b" textAnchor="middle">SHS</text>
-                    <text x="316" y={160 - analyticsData.strandBorrows.SHS * 20} fontSize="11" fontWeight="800" fill="#102131" textAnchor="middle">{analyticsData.strandBorrows.SHS}</text>
-                  </svg>
-                </div>
-              </div>
-
-              {/* Chart 2: Donut Chart */}
-              <div className="panel-card">
-                <div className="panel-card-header">
-                  <div className="panel-title">
-                    <BookMarked size={20} />
-                    <h3>Media Status Distribution</h3>
+                <div className="analytics-stat-card stat-teal">
+                  <div className="stat-icon-ring"><BookMarked size={22} /></div>
+                  <div className="stat-content">
+                    <span className="stat-value">{analyticsData.physicalBorrowed}</span>
+                    <span className="stat-label">Active Borrows</span>
                   </div>
                 </div>
-
-                <div className="svg-chart-container">
-                  <svg className="chart-svg" width="240" height="200" viewBox="0 0 200 200">
-                    <circle cx="100" cy="100" r="70" fill="transparent" stroke="#10b981" strokeWidth="20" strokeDasharray="300 440" strokeDashoffset="0" />
-                    <circle cx="100" cy="100" r="70" fill="transparent" stroke="#f2bd4a" strokeWidth="20" strokeDasharray="100 440" strokeDashoffset="-300" />
-                    <circle cx="100" cy="100" r="70" fill="transparent" stroke="#0f7581" strokeWidth="20" strokeDasharray="40 440" strokeDashoffset="-400" />
-                    <circle cx="100" cy="100" r="55" fill="#ffffff" />
-                    <text x="100" y="98" fontSize="20" fontWeight="900" fill="#102131" textAnchor="middle">
-                      {books.length}
-                    </text>
-                    <text x="100" y="116" fontSize="10" fontWeight="700" fill="#64748b" textAnchor="middle">
-                      Total Media
-                    </text>
-                  </svg>
+                <div className="analytics-stat-card stat-warning">
+                  <div className="stat-icon-ring"><AlertTriangle size={22} /></div>
+                  <div className="stat-content">
+                    <span className="stat-value">{analyticsData.overdueCount}</span>
+                    <span className="stat-label">Overdue</span>
+                  </div>
                 </div>
-
-                <div className="chart-legend">
-                  <div className="legend-item">
-                    <div className="legend-color-dot" style={{ backgroundColor: '#10b981' }}></div>
-                    <span>Available Books</span>
+                <div className="analytics-stat-card stat-info">
+                  <div className="stat-icon-ring"><FileText size={22} /></div>
+                  <div className="stat-content">
+                    <span className="stat-value">{analyticsData.requestedCount}</span>
+                    <span className="stat-label">Pending Requests</span>
                   </div>
-                  <div className="legend-item">
-                    <div className="legend-color-dot" style={{ backgroundColor: '#f2bd4a' }}></div>
-                    <span>Loaned Out</span>
-                  </div>
-                  <div className="legend-item">
-                    <div className="legend-color-dot" style={{ backgroundColor: '#0f7581' }}></div>
-                    <span>Digital E-Books</span>
+                </div>
+                <div className="analytics-stat-card stat-success">
+                  <div className="stat-icon-ring"><CheckCircle size={22} /></div>
+                  <div className="stat-content">
+                    <span className="stat-value">{analyticsData.returnedCount}</span>
+                    <span className="stat-label">Returned</span>
                   </div>
                 </div>
               </div>
-            </div>
-            
-            <div className="panel-card">
-              <div className="panel-card-header">
-                <div className="panel-title">
-                  <Smartphone size={20} />
-                  <h3>SMS Gateway Reminders Log Status</h3>
+
+              {/* Charts Row */}
+              <div className="analytics-card-grid">
+                
+                {/* Chart 1: Bar Chart — Strand Borrowing Trends */}
+                <div className="panel-card">
+                  <div className="panel-card-header">
+                    <div className="panel-title">
+                      <TrendingUp size={20} />
+                      <h3>Borrowing by Academic Strand</h3>
+                    </div>
+                  </div>
+
+                  <div className="analytics-bar-chart">
+                    {strandEntries.map(([strand, count]) => (
+                      <div className="bar-chart-row" key={strand}>
+                        <span className="bar-label">{strand}</span>
+                        <div className="bar-track">
+                          <div
+                            className="bar-fill"
+                            style={{
+                              width: `${Math.max(3, (count / maxStrand) * 100)}%`,
+                              backgroundColor: strandColors[strand] || '#0f7581'
+                            }}
+                          />
+                        </div>
+                        <span className="bar-value">{count}</span>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="chart-footnote">
+                    <span>Total transactions: <strong>{totalTx}</strong></span>
+                  </div>
+                </div>
+
+                {/* Chart 2: Donut — Media Status Distribution */}
+                <div className="panel-card">
+                  <div className="panel-card-header">
+                    <div className="panel-title">
+                      <BookMarked size={20} />
+                      <h3>Media Status Distribution</h3>
+                    </div>
+                  </div>
+
+                  <div className="donut-chart-layout">
+                    <svg className="donut-svg" viewBox="0 0 200 200" width="180" height="180">
+                      <circle cx="100" cy="100" r="70" fill="transparent" stroke="#e2e8f0" strokeWidth="22" />
+                      <circle cx="100" cy="100" r="70" fill="transparent" stroke="#10b981" strokeWidth="22"
+                        strokeDasharray={`${seg1} ${circ}`} strokeDashoffset="0"
+                        style={{ transition: 'stroke-dasharray 0.6s ease' }} />
+                      <circle cx="100" cy="100" r="70" fill="transparent" stroke="#f2bd4a" strokeWidth="22"
+                        strokeDasharray={`${seg2} ${circ}`} strokeDashoffset={`${-seg1}`}
+                        style={{ transition: 'stroke-dasharray 0.6s ease' }} />
+                      <circle cx="100" cy="100" r="70" fill="transparent" stroke="#0f7581" strokeWidth="22"
+                        strokeDasharray={`${seg3} ${circ}`} strokeDashoffset={`${-(seg1 + seg2)}`}
+                        style={{ transition: 'stroke-dasharray 0.6s ease' }} />
+                      <circle cx="100" cy="100" r="54" fill="var(--color-surface)" />
+                      <text x="100" y="96" fontSize="26" fontWeight="900" fill="var(--color-text)" textAnchor="middle">
+                        {books.length}
+                      </text>
+                      <text x="100" y="116" fontSize="10" fontWeight="600" fill="var(--color-text-muted)" textAnchor="middle">
+                        Total Media
+                      </text>
+                    </svg>
+
+                    <div className="donut-legend">
+                      <div className="legend-row">
+                        <div className="legend-color-dot" style={{ backgroundColor: '#10b981' }} />
+                        <div className="legend-info">
+                          <span className="legend-title">Available</span>
+                          <span className="legend-count">{analyticsData.availableBooks} books — {availPct}%</span>
+                        </div>
+                      </div>
+                      <div className="legend-row">
+                        <div className="legend-color-dot" style={{ backgroundColor: '#f2bd4a' }} />
+                        <div className="legend-info">
+                          <span className="legend-title">Borrowed</span>
+                          <span className="legend-count">{analyticsData.physicalBorrowed} books — {borrowedPct}%</span>
+                        </div>
+                      </div>
+                      <div className="legend-row">
+                        <div className="legend-color-dot" style={{ backgroundColor: '#0f7581' }} />
+                        <div className="legend-info">
+                          <span className="legend-title">E-Books</span>
+                          <span className="legend-count">{analyticsData.ebookBooks} titles — {ebookPct}%</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
 
-              <div className="recovery-panel">
-                <div className="recovery-row-new" style={{ borderLeftColor: '#0f7581' }}>
-                  <strong>Transaction Updates</strong>
-                  <span>Auto-sent when borrowing is approved, or return is completed. Confirms check-out codes and timestamps.</span>
+              {/* Second Row: Category Usage + Top Demand + Activity */}
+              <div className="analytics-card-grid" style={{ marginTop: '14px' }}>
+
+                {/* Category Usage Breakdown */}
+                <div className="panel-card">
+                  <div className="panel-card-header">
+                    <div className="panel-title">
+                      <ShoppingBag size={20} />
+                      <h3>Borrowing by Subject Category</h3>
+                    </div>
+                  </div>
+
+                  {catEntries.length === 0 ? (
+                    <p className="empty-msg">No category data available yet.</p>
+                  ) : (
+                    <div className="analytics-bar-chart">
+                      {catEntries.map(([cat, count]) => (
+                        <div className="bar-chart-row" key={cat}>
+                          <span className="bar-label" style={{ minWidth: '120px' }}>{cat}</span>
+                          <div className="bar-track">
+                            <div
+                              className="bar-fill"
+                              style={{
+                                width: `${Math.max(3, (count / maxCat) * 100)}%`,
+                                backgroundColor: '#0f7581'
+                              }}
+                            />
+                          </div>
+                          <span className="bar-value">{count}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
-                <div className="recovery-row-new" style={{ borderLeftColor: '#f2bd4a' }}>
-                  <strong>Due Warnings</strong>
-                  <span>Sent 48 hours prior to transaction return deadline. Informs students of deadline dates to prevent holds.</span>
-                </div>
-                <div className="recovery-row-new" style={{ borderLeftColor: '#ef4444' }}>
-                  <strong>Overdue Reminders</strong>
-                  <span>Triggered daily on active overdue items. Includes custom warnings outlining institutional panel policies.</span>
+
+                {/* Top Demand Books + Recent Activity */}
+                <div style={{ display: 'grid', gap: '14px' }}>
+                  <div className="panel-card">
+                    <div className="panel-card-header">
+                      <div className="panel-title">
+                        <TrendingUp size={20} />
+                        <h3>Most Requested Books</h3>
+                      </div>
+                    </div>
+
+                    <div className="demand-list">
+                      {topDemandBooks.length === 0 ? (
+                        <p className="empty-msg">No borrowing data recorded yet.</p>
+                      ) : (
+                        topDemandBooks.map(({ book, count }, index) => (
+                          <div className="demand-row" key={`${book?.isbn || index}-${index}`}>
+                            <span className="demand-rank">#{index + 1}</span>
+                            <div className="demand-info">
+                              <strong>{book?.title || 'Untitled'}</strong>
+                              <small>{book?.author || 'Unknown'} • {book?.category || 'General'}</small>
+                            </div>
+                            <span className="demand-count">{count} borrows</span>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="panel-card">
+                    <div className="panel-card-header">
+                      <div className="panel-title">
+                        <History size={20} />
+                        <h3>Recent Activity</h3>
+                      </div>
+                    </div>
+
+                    <div className="activity-timeline">
+                      {recentTx.length === 0 ? (
+                        <p className="empty-msg">No recent transactions.</p>
+                      ) : (
+                        recentTx.map((tx) => (
+                          <div className="timeline-item" key={tx.transaction_id}>
+                            <div className={`timeline-dot ${tx.status === 'Overdue' ? 'dot-danger' : tx.status === 'Returned' ? 'dot-success' : 'dot-info'}`} />
+                            <div className="timeline-content">
+                              <strong>{tx.users?.name || 'User'}</strong> — {tx.books?.title || 'Book'}
+                              <span className={`badge badge-sm ${tx.status === 'Overdue' ? 'badge-warning' : tx.status === 'Returned' ? 'badge-success' : 'badge-info'}`}>
+                                {tx.status}
+                              </span>
+                            </div>
+                            <span className="timeline-date">{new Date(tx.borrow_date).toLocaleDateString()}</span>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
                 </div>
               </div>
-            </div>
-          </>
-        )}
+            </>
+          )
+        })()}
 
         {/* VIEW REPORTS */}
         {view === 'reports' && (
@@ -1277,7 +1749,7 @@ export default function App() {
             </div>
 
             <p style={{ fontSize: '0.9rem', color: 'var(--color-text-muted)', marginBottom: '24px' }}>
-              Download official school logs in Excel/CSV format for administrative documentation, inventory auditing, and student activity analysis.
+              Download official school reports for borrowed books, overdue books, user activity, and inventory documentation as Excel-compatible CSV files.
             </p>
 
             <div className="reports-grid">
@@ -1285,33 +1757,44 @@ export default function App() {
               <div className="report-item-card">
                 <div className="report-card-top">
                   <strong>Book Inventory Masterlist</strong>
-                  <span>Format: CSV • System Generated</span>
+                  <span>Format: Excel-compatible CSV • System Generated</span>
                   <p>Comprehensive report outlining all books catalogued in the system, detailing author, ISBN, category, and shelf status.</p>
                 </div>
                 <button className="btn-primary btn-report-download" onClick={() => handleExportCSV('books')}>
-                  Download Masterlist CSV
+                  Download Inventory Report
                 </button>
               </div>
 
               <div className="report-item-card">
                 <div className="report-card-top">
-                  <strong>Library Loan & Transactions</strong>
-                  <span>Format: CSV • Live Operations</span>
-                  <p>Comprehensive transaction log listing all active borrowings, request submissions, return dates, and overdue items.</p>
+                  <strong>Borrowed Books and Transactions</strong>
+                  <span>Format: Excel-compatible CSV • Live Operations</span>
+                  <p>Comprehensive transaction log listing all active borrowings, request submissions, return deadlines, and overdue status.</p>
                 </div>
                 <button className="btn-primary btn-report-download" onClick={() => handleExportCSV('transactions')}>
-                  Download Transactions CSV
+                  Download Borrowed Books Report
                 </button>
               </div>
 
               <div className="report-item-card">
                 <div className="report-card-top">
-                  <strong>Active Borrowers Directory</strong>
-                  <span>Format: CSV • Dynamic</span>
-                  <p>Administrative log summarizing active library cards, student names, phone numbers, and academic levels.</p>
+                  <strong>Overdue Books and SMS Follow-up</strong>
+                  <span>Format: Excel-compatible CSV • Due Monitoring</span>
+                  <p>Focused report for overdue books, borrower academic details, due dates, and notification readiness for librarian action.</p>
+                </div>
+                <button className="btn-primary btn-report-download" onClick={() => handleExportCSV('overdue')}>
+                  Download Overdue Report
+                </button>
+              </div>
+
+              <div className="report-item-card">
+                <div className="report-card-top">
+                  <strong>User Activity Directory</strong>
+                  <span>Format: Excel-compatible CSV • Dynamic</span>
+                  <p>Administrative log summarizing user identities, academic program or strand, year level, and contact details.</p>
                 </div>
                 <button className="btn-primary btn-report-download" onClick={() => handleExportCSV('users')}>
-                  Download Directory CSV
+                  Download User Activity Report
                 </button>
               </div>
 
@@ -1326,13 +1809,16 @@ export default function App() {
         <div className="modal-overlay">
           <div className="modal-card">
             <div className="modal-header">
-              <h3>Add New Book to Shelf</h3>
-              <button className="btn-close-modal" onClick={() => setIsAddBookOpen(false)}>
+              <h3>{editingBookId ? 'Edit Book Record' : 'Add New Book to Shelf'}</h3>
+              <button className="btn-close-modal" onClick={() => {
+                setIsAddBookOpen(false)
+                resetBookForm()
+              }}>
                 <X size={16} />
               </button>
             </div>
             
-            <form onSubmit={handleAddBook} className="modal-form">
+            <form onSubmit={handleSaveBook} className="modal-form">
               <div className="form-group">
                 <label htmlFor="b-title">Book Title</label>
                 <input 
@@ -1366,6 +1852,43 @@ export default function App() {
                   onChange={(e) => setNewBookIsbn(e.target.value)}
                   placeholder="e.g. 978-013-482" 
                   required 
+                />
+              </div>
+
+              <div className="form-group">
+                <label htmlFor="b-cover">Book Cover Image</label>
+                <div
+                  className="cover-upload-area"
+                  onClick={() => coverFileInputRef.current?.click()}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => e.key === 'Enter' && coverFileInputRef.current?.click()}
+                >
+                  {newBookCoverPreview ? (
+                    <div className="cover-upload-preview">
+                      <img src={newBookCoverPreview} alt="Cover preview" />
+                      <span className="cover-change-hint"><ImagePlus size={14} /> Change Cover</span>
+                    </div>
+                  ) : (
+                    <div className="cover-upload-empty">
+                      <Upload size={24} />
+                      <span>Click to upload cover image</span>
+                      <small>JPG, PNG or WEBP — max 5MB</small>
+                    </div>
+                  )}
+                </div>
+                <input
+                  ref={coverFileInputRef}
+                  id="b-cover"
+                  type="file"
+                  accept="image/*"
+                  style={{ display: 'none' }}
+                  onChange={(e) => {
+                    const file = e.target.files?.[0]
+                    if (!file) return
+                    setNewBookCoverFile(file)
+                    setNewBookCoverPreview(URL.createObjectURL(file))
+                  }}
                 />
               </div>
 
@@ -1414,24 +1937,88 @@ export default function App() {
                 </select>
               </div>
 
-              {newBookStatus === 'E-book' && (
+              {newBookStatus === 'Available' && (
                 <div className="form-group">
-                  <label htmlFor="b-content">E-Book Digital Contents (Chapters)</label>
-                  <textarea 
-                    id="b-content" 
-                    value={newBookContent}
-                    onChange={(e) => setNewBookContent(e.target.value)}
-                    placeholder="Chapter 1: Principles of study...\n\nChapter 2: Structural implementations..."
+                  <label htmlFor="b-copies">Total Physical Copies</label>
+                  <input
+                    id="b-copies"
+                    type="number"
+                    min="1"
+                    value={newBookTotalCopies}
+                    onChange={(e) => setNewBookTotalCopies(Math.max(1, parseInt(e.target.value) || 1))}
+                    required
                   />
                 </div>
               )}
 
+              {newBookStatus === 'E-book' && (
+                <>
+                  <div className="form-group">
+                    <label htmlFor="b-ebook-file">E-Book PDF File (Optional Upload)</label>
+                    <div
+                      className="cover-upload-area"
+                      onClick={() => ebookFileInputRef.current?.click()}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(e) => e.key === 'Enter' && ebookFileInputRef.current?.click()}
+                    >
+                      {newBookEbookFile ? (
+                        <div className="cover-upload-preview" style={{ padding: '20px', flexDirection: 'column', gap: '8px' }}>
+                          <FileText size={48} style={{ color: 'var(--color-primary)' }} />
+                          <span style={{ fontWeight: 'bold', fontSize: '0.9rem', textAlign: 'center' }}>{newBookEbookFile.name}</span>
+                          <span className="cover-change-hint">Change File</span>
+                        </div>
+                      ) : newBookEbookUrl && (newBookEbookUrl.includes('/storage/v1/object/public/books/ebooks/') || newBookEbookUrl.toLowerCase().endsWith('.pdf') || newBookEbookUrl.startsWith('data:')) ? (
+                        <div className="cover-upload-preview" style={{ padding: '20px', flexDirection: 'column', gap: '8px' }}>
+                          <FileText size={48} style={{ color: 'var(--color-primary)' }} />
+                          <span style={{ fontWeight: 'bold', fontSize: '0.9rem', textAlign: 'center' }}>Current E-Book PDF Attached</span>
+                          <span className="cover-change-hint">Replace File</span>
+                        </div>
+                      ) : (
+                        <div className="cover-upload-empty">
+                          <Upload size={24} />
+                          <span>Click to upload E-Book PDF</span>
+                          <small>PDF format — max 15MB</small>
+                        </div>
+                      )}
+                    </div>
+                    <input
+                      ref={ebookFileInputRef}
+                      id="b-ebook-file"
+                      type="file"
+                      accept="application/pdf"
+                      style={{ display: 'none' }}
+                      onChange={(e) => {
+                        const file = e.target.files?.[0]
+                        if (!file) return
+                        setNewBookEbookFile(file)
+                      }}
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label htmlFor="b-content">E-Book Text Contents (Alternative / Fallback Chapters)</label>
+                    <textarea 
+                      id="b-content" 
+                      value={newBookContent}
+                      onChange={(e) => setNewBookContent(e.target.value)}
+                      placeholder="Chapter 1: Principles of study...
+
+Chapter 2: Structural implementations..."
+                    />
+                  </div>
+                </>
+              )}
+
               <div className="modal-actions">
-                <button type="button" className="btn-secondary" onClick={() => setIsAddBookOpen(false)}>
+                <button type="button" className="btn-secondary" onClick={() => {
+                  setIsAddBookOpen(false)
+                  resetBookForm()
+                }}>
                   Cancel
                 </button>
-                <button type="submit" className="btn-primary">
-                  Save Book Record
+                <button type="submit" className="btn-primary" disabled={isUploadingCover || isUploadingEbook}>
+                  {isUploadingCover ? 'Uploading cover...' : isUploadingEbook ? 'Uploading E-Book...' : editingBookId ? 'Update Book Record' : 'Save Book Record'}
                 </button>
               </div>
             </form>

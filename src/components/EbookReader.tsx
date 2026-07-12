@@ -13,6 +13,14 @@ export function EbookReader({ book, onClose }: EbookReaderProps) {
   const [fontFamily, setFontFamily] = useState<'serif' | 'sans' | 'mono'>('serif')
   const [currentPage, setCurrentPage] = useState(1)
 
+  const isPDF = !!(
+    book.ebook_url && (
+      book.ebook_url.toLowerCase().endsWith('.pdf') ||
+      book.ebook_url.includes('/storage/v1/object/public/books/ebooks/') ||
+      book.ebook_url.startsWith('data:application/pdf')
+    )
+  )
+
   // Default content fallback in case book text is blank
   const defaultEbookContent = `Chapter 1: Foundations of the Discipline
 
@@ -131,48 +139,62 @@ By integrating these features, modern educational resources become interactive h
         </header>
 
         {/* Content Pane */}
-        <main className={`reader-content font-${fontFamily} size-${fontSize}`}>
-          <div className="content-container">
-            {paginatedParagraphs.map((para, index) => {
-              // Highlight headers (e.g. Chapter 1, Section 1.1)
-              const isHeader = para.trim().startsWith('Chapter') || para.trim().startsWith('Section')
-              return isHeader ? (
-                <h4 key={index} className="reader-chapter-title">{para}</h4>
-              ) : (
-                <p key={index} className="reader-paragraph">{para}</p>
-              )
-            })}
-          </div>
-        </main>
+        {isPDF ? (
+          <main className="reader-content pdf-reader-mode" style={{ padding: 0, height: 'calc(100vh - 70px)' }}>
+            <iframe
+              src={book.ebook_url || ''}
+              title={book.title}
+              width="100%"
+              height="100%"
+              style={{ border: 'none', background: '#ffffff' }}
+            />
+          </main>
+        ) : (
+          <>
+            <main className={`reader-content font-${fontFamily} size-${fontSize}`}>
+              <div className="content-container">
+                {paginatedParagraphs.map((para, index) => {
+                  // Highlight headers (e.g. Chapter 1, Section 1.1)
+                  const isHeader = para.trim().startsWith('Chapter') || para.trim().startsWith('Section')
+                  return isHeader ? (
+                    <h4 key={index} className="reader-chapter-title">{para}</h4>
+                  ) : (
+                    <p key={index} className="reader-paragraph">{para}</p>
+                  )
+                })}
+              </div>
+            </main>
 
-        {/* Page Footer Navigation */}
-        <footer className="reader-footer">
-          <button 
-            className="footer-nav-btn" 
-            onClick={handlePrevPage} 
-            disabled={currentPage === 1}
-          >
-            <ChevronLeft size={20} /> Previous
-          </button>
-          
-          <div className="reader-progress">
-            <span className="page-indicator">Page {currentPage} of {totalPages}</span>
-            <div className="progress-bar-track">
-              <div 
-                className="progress-bar-fill" 
-                style={{ width: `${(currentPage / totalPages) * 100}%` }}
-              ></div>
-            </div>
-          </div>
+            {/* Page Footer Navigation */}
+            <footer className="reader-footer">
+              <button 
+                className="footer-nav-btn" 
+                onClick={handlePrevPage} 
+                disabled={currentPage === 1}
+              >
+                <ChevronLeft size={20} /> Previous
+              </button>
+              
+              <div className="reader-progress">
+                <span className="page-indicator">Page {currentPage} of {totalPages}</span>
+                <div className="progress-bar-track">
+                  <div 
+                    className="progress-bar-fill" 
+                    style={{ width: `${(currentPage / totalPages) * 100}%` }}
+                  ></div>
+                </div>
+              </div>
 
-          <button 
-            className="footer-nav-btn" 
-            onClick={handleNextPage} 
-            disabled={currentPage === totalPages}
-          >
-            Next <ChevronRight size={20} />
-          </button>
-        </footer>
+              <button 
+                className="footer-nav-btn" 
+                onClick={handleNextPage} 
+                disabled={currentPage === totalPages}
+              >
+                Next <ChevronRight size={20} />
+              </button>
+            </footer>
+          </>
+        )}
       </div>
     </div>
   )

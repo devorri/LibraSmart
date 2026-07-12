@@ -15,6 +15,7 @@ export interface User {
   program_strand: string | null
   academic_level: string | null
   phone_number: string | null
+  avatar_url?: string | null
   created_at?: string
 }
 
@@ -28,6 +29,9 @@ export interface Book {
   status: 'Available' | 'Borrowed' | 'E-book'
   ebook_url: string | null
   content: string | null
+  cover_image_url?: string | null
+  total_copies?: number
+  available_copies?: number
 }
 
 export interface Transaction {
@@ -74,13 +78,13 @@ export const mockData = {
   ] as User[],
 
   books: [
-    { book_id: 1, title: 'Introduction to Information Technology', author: 'E. Turban', isbn: '978-047-134', category: 'Information Technology', program_strand_relevance: 'BSIT', status: 'Available', ebook_url: null, content: null },
-    { book_id: 2, title: 'Applied Database Management Systems', author: 'W. Fadhilah', isbn: '978-602-211', category: 'Database', program_strand_relevance: 'BSIT', status: 'E-book', ebook_url: 'https://example.com/books/applied-db.pdf', content: 'Chapter 1: Database System Concepts\n\nA database-management system (DBMS) is a collection of interrelated data and a set of programs to access those data. This collection of data, usually referred to as the database, contains information relevant to an enterprise. The primary goal of a DBMS is to provide a way to store and retrieve database information that is both convenient and efficient.\n\nChapter 2: Relational Model\n\nThe relational model is today the primary data model for commercial data processing applications. It has achieved this position because of its simplicity and ease of database design. A relational database consists of a collection of tables, each of which is assigned a unique name. Each table has a structure similar to that of a spreadsheet.\n\nChapter 3: SQL Structure Query Language\n\nStructured Query Language (SQL) is the most widely used relational database query language. It is designed to query, update, and manage relational databases.' },
-    { book_id: 3, title: 'Research Methods in Computing', author: 'M. Kumari', isbn: '978-621-104', category: 'Research', program_strand_relevance: 'BSIT', status: 'Available', ebook_url: null, content: null },
-    { book_id: 4, title: 'Web Systems Design & Development', author: 'A. Boranbayev', isbn: '978-013-482', category: 'Information Technology', program_strand_relevance: 'BSIT', status: 'Available', ebook_url: null, content: null },
-    { book_id: 5, title: 'Digital Library Operations', author: 'A. Zainab', isbn: '978-971-551', category: 'Library Science', program_strand_relevance: 'General', status: 'Available', ebook_url: null, content: null },
-    { book_id: 6, title: 'Advanced Accounting Volume 1', author: 'C. Guerrero', isbn: '978-971-042', category: 'Accounting', program_strand_relevance: 'BSA', status: 'E-book', ebook_url: 'https://example.com/books/adv-accounting.pdf', content: 'Chapter 1: Partnership Formation\n\nA partnership is an association of two or more persons to carry on as co-owners of a business for profit. The agreement between the partners is called the Articles of Partnership. When a partnership is formed, partners contribute assets and/or liabilities to the business.\n\nChapter 2: Partnership Operations\n\nThe operations of a partnership are shared between partners according to their profit and loss agreement. This allocation can be based on a fixed ratio, capital balances, or salaries and interest allowance.' },
-    { book_id: 7, title: 'Network Fundamentals (CCNA)', author: 'M. Dye', isbn: '978-158-713', category: 'Networking', program_strand_relevance: 'BSIT', status: 'Available', ebook_url: null, content: null }
+    { book_id: 1, title: 'Introduction to Information Technology', author: 'E. Turban', isbn: '978-047-134', category: 'Information Technology', program_strand_relevance: 'BSIT', status: 'Available', ebook_url: null, content: null, cover_image_url: 'https://images.unsplash.com/photo-1518770660439-4636190af475?w=400&q=80', total_copies: 3, available_copies: 2 },
+    { book_id: 2, title: 'Applied Database Management Systems', author: 'W. Fadhilah', isbn: '978-602-211', category: 'Database', program_strand_relevance: 'BSIT', status: 'E-book', ebook_url: 'https://example.com/books/applied-db.pdf', content: 'Chapter 1: Database System Concepts\n\nA database-management system (DBMS) is a collection of interrelated data and a set of programs to access those data. This collection of data, usually referred to as the database, contains information relevant to an enterprise. The primary goal of a DBMS is to provide a way to store and retrieve database information that is both convenient and efficient.\n\nChapter 2: Relational Model\n\nThe relational model is today the primary data model for commercial data processing applications. It has achieved this position because of its simplicity and ease of database design. A relational database consists of a collection of tables, each of which is assigned a unique name. Each table has a structure similar to that of a spreadsheet.\n\nChapter 3: SQL Structure Query Language\n\nStructured Query Language (SQL) is the most widely used relational database query language. It is designed to query, update, and manage relational databases.', cover_image_url: 'https://images.unsplash.com/photo-1544383835-bda2bc66a55d?w=400&q=80', total_copies: 1, available_copies: 1 },
+    { book_id: 3, title: 'Research Methods in Computing', author: 'M. Kumari', isbn: '978-621-104', category: 'Research', program_strand_relevance: 'BSIT', status: 'Available', ebook_url: null, content: null, cover_image_url: 'https://images.unsplash.com/photo-1457369804613-52c61a468e7d?w=400&q=80', total_copies: 2, available_copies: 1 },
+    { book_id: 4, title: 'Web Systems Design & Development', author: 'A. Boranbayev', isbn: '978-013-482', category: 'Information Technology', program_strand_relevance: 'BSIT', status: 'Available', ebook_url: null, content: null, cover_image_url: 'https://images.unsplash.com/photo-1507238691740-187a5b1d37b8?w=400&q=80', total_copies: 4, available_copies: 3 },
+    { book_id: 5, title: 'Digital Library Operations', author: 'A. Zainab', isbn: '978-971-551', category: 'Library Science', program_strand_relevance: 'General', status: 'Available', ebook_url: null, content: null, cover_image_url: 'https://images.unsplash.com/photo-1507842217343-583bb7270b66?w=400&q=80', total_copies: 3, available_copies: 3 },
+    { book_id: 6, title: 'Advanced Accounting Volume 1', author: 'C. Guerrero', isbn: '978-971-042', category: 'Accounting', program_strand_relevance: 'BSA', status: 'E-book', ebook_url: 'https://example.com/books/adv-accounting.pdf', content: 'Chapter 1: Partnership Formation\n\nA partnership is an association of two or more persons to carry on as co-owners of a business for profit. The agreement between the partners is called the Articles of Partnership. When a partnership is formed, partners contribute assets and/or liabilities to the business.\n\nChapter 2: Partnership Operations\n\nThe operations of a partnership are shared between partners according to their profit and loss agreement. This allocation can be based on a fixed ratio, capital balances, or salaries and interest allowance.', cover_image_url: 'https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?w=400&q=80', total_copies: 1, available_copies: 1 },
+    { book_id: 7, title: 'Network Fundamentals (CCNA)', author: 'M. Dye', isbn: '978-158-713', category: 'Networking', program_strand_relevance: 'BSIT', status: 'Available', ebook_url: null, content: null, cover_image_url: 'https://images.unsplash.com/photo-1558494949-ef010cbdcc31?w=400&q=80', total_copies: 2, available_copies: 2 }
   ] as Book[],
 
   transactions: [
@@ -289,7 +293,7 @@ export async function fetchTransactions(): Promise<Transaction[]> {
   try {
     const { data, error } = await supabase
       .from('transactions')
-      .select('*, users(name, username, program_strand, academic_level, phone_number), books(title, author, isbn, category)')
+      .select('*, users(name, username, program_strand, academic_level, phone_number), books(title, author, isbn, category, cover_image_url)')
       .order('borrow_date', { ascending: false })
     if (error) throw error
     return data as Transaction[]
@@ -321,19 +325,37 @@ export async function createTransaction(user_id: number, book_id: number, dueDay
     txs.unshift(newTx)
     saveStoredMock('transactions', txs)
 
-    // Update book status to Requested
-    await updateBook(book_id, { status: 'Borrowed' })
+    // Update book copies and status
+    const bs = getStoredMock<Book[]>('books', mockData.books)
+    const book = bs.find(b => b.book_id === book_id)
+    if (book) {
+      const newAvail = Math.max(0, (book.available_copies ?? 1) - 1)
+      const newStatus = newAvail === 0 ? 'Borrowed' : 'Available'
+      await updateBook(book_id, {
+        available_copies: newAvail,
+        status: newStatus
+      })
+    }
 
     const us = getStoredMock<User[]>('users', mockData.users)
-    const bs = getStoredMock<Book[]>('books', mockData.books)
     return {
       ...newTx,
       users: us.find(u => u.user_id === user_id),
-      books: bs.find(b => b.book_id === book_id)
+      books: getStoredMock<Book[]>('books', mockData.books).find(b => b.book_id === book_id)
     }
   }
 
   try {
+    const { data: bookData } = await supabase
+      .from('books')
+      .select('available_copies, total_copies')
+      .eq('book_id', book_id)
+      .single()
+    
+    const currentAvail = bookData ? (bookData.available_copies ?? 1) : 1
+    const newAvail = Math.max(0, currentAvail - 1)
+    const newStatus = newAvail === 0 ? 'Borrowed' : 'Available'
+
     const { data, error } = await supabase
       .from('transactions')
       .insert([{
@@ -347,7 +369,10 @@ export async function createTransaction(user_id: number, book_id: number, dueDay
       .single()
 
     if (error) throw error
-    await updateBook(book_id, { status: 'Borrowed' })
+    await supabase
+      .from('books')
+      .update({ available_copies: newAvail, status: newStatus })
+      .eq('book_id', book_id)
     return data as Transaction
   } catch (e) {
     console.error("Create transaction error:", e)
@@ -389,16 +414,39 @@ export async function returnBookTransaction(transaction_id: number, book_id: num
       txs[idx].return_date = returnDate
       saveStoredMock('transactions', txs)
     }
-    await updateBook(book_id, { status: 'Available' })
+    
+    const bs = getStoredMock<Book[]>('books', mockData.books)
+    const book = bs.find(b => b.book_id === book_id)
+    if (book) {
+      const newAvail = Math.min(book.total_copies ?? 1, (book.available_copies ?? 0) + 1)
+      await updateBook(book_id, {
+        available_copies: newAvail,
+        status: 'Available'
+      })
+    }
     return true
   }
   try {
+    const { data: bookData } = await supabase
+      .from('books')
+      .select('available_copies, total_copies')
+      .eq('book_id', book_id)
+      .single()
+
+    const currentAvail = bookData ? (bookData.available_copies ?? 0) : 0
+    const total = bookData ? (bookData.total_copies ?? 1) : 1
+    const newAvail = Math.min(total, currentAvail + 1)
+
     const { error } = await supabase
       .from('transactions')
       .update({ status: 'Returned', return_date: returnDate })
       .eq('transaction_id', transaction_id)
     if (error) throw error
-    await updateBook(book_id, { status: 'Available' })
+
+    await supabase
+      .from('books')
+      .update({ available_copies: newAvail, status: 'Available' })
+      .eq('book_id', book_id)
     return true
   } catch (e) {
     console.error("Return book error:", e)
@@ -552,5 +600,105 @@ export async function updateNotificationStatus(notification_id: number, status: 
   } catch (e) {
     console.error("Update notification error:", e)
     return false
+  }
+}
+
+// -------------------------------------------------------------
+// USER UPDATE API
+// -------------------------------------------------------------
+export async function updateUser(user_id: number, updates: Partial<User>): Promise<boolean> {
+  if (useMock) {
+    const list = getStoredMock<User[]>('users', mockData.users)
+    const idx = list.findIndex(u => u.user_id === user_id)
+    if (idx !== -1) {
+      list[idx] = { ...list[idx], ...updates }
+      saveStoredMock('users', list)
+      return true
+    }
+    return false
+  }
+  try {
+    const { error } = await supabase
+      .from('users')
+      .update(updates)
+      .eq('user_id', user_id)
+    if (error) throw error
+    return true
+  } catch (e) {
+    console.error('Update user error:', e)
+    return false
+  }
+}
+
+// -------------------------------------------------------------
+// SUPABASE STORAGE — FILE UPLOAD HELPERS
+// -------------------------------------------------------------
+
+/**
+ * Uploads a book cover image to the `books` Supabase Storage bucket.
+ * Returns the public URL string on success, or null on failure.
+ */
+export async function uploadBookCover(file: File, isbn: string): Promise<string | null> {
+  const ext = file.name.split('.').pop() || 'jpg'
+  const path = `covers/${isbn.replace(/[^a-zA-Z0-9]/g, '-')}-${Date.now()}.${ext}`
+  try {
+    const { error } = await supabase.storage
+      .from('books')
+      .upload(path, file, { upsert: true, contentType: file.type })
+    if (error) throw error
+    const { data } = supabase.storage.from('books').getPublicUrl(path)
+    return data.publicUrl
+  } catch (e) {
+    console.error('Upload book cover error:', e)
+    return null
+  }
+}
+
+/**
+ * Uploads a user profile photo to the `profile` Supabase Storage bucket.
+ * Returns the public URL string on success, or null on failure.
+ */
+export async function uploadProfilePhoto(file: File, userId: number): Promise<string | null> {
+  const ext = file.name.split('.').pop() || 'jpg'
+  const path = `avatars/${userId}-${Date.now()}.${ext}`
+  try {
+    const { error } = await supabase.storage
+      .from('profile')
+      .upload(path, file, { upsert: true, contentType: file.type })
+    if (error) throw error
+    const { data } = supabase.storage.from('profile').getPublicUrl(path)
+    return data.publicUrl
+  } catch (e) {
+    console.error('Upload profile photo error:', e)
+    return null
+  }
+}
+
+/**
+ * Uploads an e-book file (PDF) to the `books` Supabase Storage bucket.
+ * Returns the public URL string on success, or null on failure.
+ */
+export async function uploadEbookFile(file: File, isbn: string): Promise<string | null> {
+  if (useMock) {
+    return new Promise((resolve) => {
+      const reader = new FileReader()
+      reader.onloadend = () => {
+        resolve(reader.result as string)
+      }
+      reader.readAsDataURL(file)
+    })
+  }
+  const ext = file.name.split('.').pop() || 'pdf'
+  const path = `ebooks/${isbn.replace(/[^a-zA-Z0-9]/g, '-')}-${Date.now()}.${ext}`
+  try {
+    const { error } = await supabase.storage
+      .from('books')
+      .upload(path, file, { upsert: true, contentType: file.type })
+    if (error) throw error
+    const { data } = supabase.storage.from('books').getPublicUrl(path)
+    return data.publicUrl
+  } catch (e) {
+    console.error('Upload e-book file error:', e)
+    return null
   }
 }

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { fetchNotifications } from '../lib/supabase'
 import type { Notification, User } from '../lib/supabase'
-import { Smartphone, X, Send, Bell, ShieldAlert, CheckCheck } from 'lucide-react'
+import { Smartphone, X, Bell, ShieldAlert, CheckCheck } from 'lucide-react'
 
 interface SMSPhoneSimulatorProps {
   currentUser: User | null
@@ -162,14 +162,11 @@ export function SMSPhoneSimulator({ currentUser, triggerRefreshSignal }: SMSPhon
               )}
             </div>
 
-            {/* Input Bar (Simulated Output) */}
-            <div className="phone-input-bar">
-              <div className="phone-input-placeholder">
-                <span>Text Message (Read-Only)</span>
-              </div>
-              <button className="phone-send-btn" disabled>
-                <Send size={14} />
-              </button>
+
+            {/* Read-Only Status Strip */}
+            <div className="phone-readonly-strip">
+              <span className="phone-readonly-dot"></span>
+              <span>MPCI Library Gateway — Notifications Only</span>
             </div>
             
             {/* Home Indicator */}
