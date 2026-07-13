@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { addLibraryLog, fetchLibraryLogs } from '../lib/supabase'
 import type { LibraryLog, User } from '../lib/supabase'
 import { QrCode, LogIn, LogOut, History, RefreshCw, Volume2 } from 'lucide-react'
 import { QRCodeSVG } from 'qrcode.react'
+import jsQR from 'jsqr'
 
 interface QRManagerProps {
   currentUser: User | null
@@ -12,9 +13,111 @@ interface QRManagerProps {
 export function QRManager({ currentUser, onLogCreated }: QRManagerProps) {
   const [logs, setLogs] = useState<LibraryLog[]>([])
   const [scanType, setScanType] = useState<'Entry' | 'Exit'>('Entry')
-  const [scanning, setScanning] = useState(false)
+  const [cameraActive, setCameraActive] = useState(false)
+  const [cameraError, setCameraError] = useState<string | null>(null)
   const [scanResult, setScanResult] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const videoRef = useRef<HTMLVideoElement | null>(null)
+  const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  const scanIntervalRef = useRef<number | null>(null)
+
+  const stopCamera = () => {
+    if (scanIntervalRef.current) {
+      window.clearInterval(scanIntervalRef.current)
+      scanIntervalRef.current = null
+    }
+
+    const video = videoRef.current
+    if (video?.srcObject instanceof MediaStream) {
+      video.srcObject.getTracks().forEach((track) => track.stop())
+      video.srcObject = null
+    }
+
+    setCameraActive(false)
+  }
+
+  useEffect(() => {
+    return () => {
+      stopCamera()
+    }
+  }, [])
+
+  const scanFrame = async () => {
+    const video = videoRef.current
+    const canvas = canvasRef.current
+    const targetUserId = currentUser?.user_id
+
+    if (!video || !canvas || !targetUserId) return
+
+    const width = video.videoWidth
+    const height = video.videoHeight
+    if (!width || !height) return
+
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+
+    canvas.width = width
+    canvas.height = height
+    ctx.drawImage(video, 0, 0, width, height)
+
+    const imageData = ctx.getImageData(0, 0, width, height)
+    const code = jsQR(imageData.data, width, height)
+
+    if (code?.data) {
+      if (code.data.includes('MPCI-LIBRARY-GATE')) {
+        stopCamera()
+        setCameraError(null)
+        setScanResult(`QR matched! Logging ${scanType}.`)
+        setLoading(true)
+
+        try {
+          const newLog = await addLibraryLog(targetUserId, scanType)
+          if (newLog) {
+            playBeep()
+            setScanResult(`Successfully logged ${scanType}!`)
+            onLogCreated()
+            loadData()
+          } else {
+            setScanResult('Failed to log attendance. Try again.')
+          }
+        } catch (err) {
+          setScanResult('Error saving gate record.')
+          console.error(err)
+        } finally {
+          setLoading(false)
+        }
+      } else {
+        setScanResult('Detected QR is not the library gate code.')
+      }
+    }
+  }
+
+  const startCamera = async () => {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setCameraError('Camera access is not supported in this browser.')
+      return
+    }
+
+    setCameraError(null)
+    setScanResult(null)
+    setLoading(true)
+
+    try {
+      const mediaStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+      if (videoRef.current) {
+        videoRef.current.srcObject = mediaStream
+        await videoRef.current.play()
+      }
+        setCameraActive(true)
+      setScanResult('Point your device at the library gate QR code.')
+      scanIntervalRef.current = window.setInterval(scanFrame, 700)
+    } catch (err) {
+      setCameraError('Unable to open camera. Please allow access or use a supported device.')
+      console.error('Camera error:', err)
+    } finally {
+      setLoading(false)
+    }
+  }
 
   // Load logs
   const loadData = async () => {
@@ -55,40 +158,6 @@ export function QRManager({ currentUser, onLogCreated }: QRManagerProps) {
     } catch (e) {
       console.warn("Audio Context beep failed:", e)
     }
-  }
-
-  // Simulate scanning library QR code
-  const handleSimulateScan = async (e: React.FormEvent) => {
-    e.preventDefault()
-    
-    // Student or teacher scanning the stationary gate QR
-    const targetUserId = currentUser?.user_id
-    if (!targetUserId) return
-
-    setScanning(true)
-    setScanResult(null)
-    setLoading(true)
-
-    // Simulate camera laser sweeping for 1.2s
-    setTimeout(async () => {
-      try {
-        const newLog = await addLibraryLog(targetUserId, scanType)
-        if (newLog) {
-          playBeep()
-          setScanResult(`Successfully logged ${scanType}!`)
-          onLogCreated() // Refresh parent dashboard
-          loadData() // Refresh local log list
-        } else {
-          setScanResult('Failed to log attendance. Try again.')
-        }
-      } catch (err) {
-        setScanResult('Error saving gate record.')
-        console.error(err)
-      } finally {
-        setScanning(false)
-        setLoading(false)
-      }
-    }, 1200)
   }
 
   const userLogs = logs.filter(l => l.user_id === currentUser?.user_id)
@@ -169,53 +238,61 @@ export function QRManager({ currentUser, onLogCreated }: QRManagerProps) {
       ) : (
         // STUDENT / TEACHER VIEW: SCANNING HANDHELD CONSOLE
         <div className="qr-student-view">
-          <div className="qr-grid">
             <div className="qr-panel scan-desk">
               <div className="panel-header">
                 <QrCode className="header-icon text-teal" />
                 <div>
-                  <h3>Scan Library Gate QR</h3>
-                  <p className="subtitle">Identify check-in or check-out state</p>
+                  <h3>Student / Teacher Gate Scanner</h3>
+                  <p className="subtitle">Tap Scan to record entry or exit at the library gate. Select your direction first.</p>
                 </div>
               </div>
 
-              {/* Virtual Scanner Viewfinder on Student Screen */}
+              {/* Live Camera QR Scanner */}
               <div className="viewfinder-container">
-                <div className={`viewfinder-screen ${scanning ? 'scanning' : ''}`}>
+                <div className={`viewfinder-screen ${cameraActive ? 'camera-active' : ''}`}>
                   <div className="viewfinder-borders">
                     <div className="border-tl"></div>
                     <div className="border-tr"></div>
                     <div className="border-bl"></div>
                     <div className="border-br"></div>
                   </div>
-                  
-                  {/* Scanning Laser Line */}
-                  {scanning && <div className="scanner-laser"></div>}
+
+                  {cameraActive ? (
+                    <video
+                      ref={videoRef}
+                      className="scanner-video"
+                      muted
+                      playsInline
+                    />
+                  ) : (
+                    <QRCodeSVG
+                      value="MPCI-LIBRARY-GATE"
+                      size={130}
+                      bgColor="transparent"
+                      fgColor="#0f7581"
+                      level="Q"
+                      className="qr-svg-placeholder"
+                    />
+                  )}
+
+                  {cameraActive && <div className="scanner-laser"></div>}
 
                   <div className="scanner-status-overlay">
-                    {scanning ? (
-                      <span className="pulse-text">SCANNING LIBRARY GATE...</span>
+                    {cameraError ? (
+                      <span className="status-badge error">{cameraError}</span>
+                    ) : cameraActive ? (
+                      <span className="pulse-text">{scanResult || 'Scanning for library gate QR...'}</span>
                     ) : scanResult ? (
                       <span className="status-badge-result success">{scanResult}</span>
                     ) : (
-                      <span className="pulse-text-slow">POINT CAMERA TO LIBRARY QR</span>
+                      <span className="pulse-text-slow">Open camera and point at the gate QR</span>
                     )}
                   </div>
-
-                  {/* Target scan gate QR */}
-                  <QRCodeSVG
-                    value="MPCI-LIBRARY-GATE"
-                    size={130}
-                    bgColor="transparent"
-                    fgColor="#0f7581"
-                    level="Q"
-                    className={`qr-svg-placeholder ${scanning ? 'spinning' : ''}`}
-                  />
                 </div>
               </div>
 
               {/* Scan controller */}
-              <form onSubmit={handleSimulateScan} className="scan-control-form">
+              <form onSubmit={(e) => e.preventDefault()} className="scan-control-form">
                 <div className="scan-type-toggle">
                   <button
                     type="button"
@@ -236,13 +313,20 @@ export function QRManager({ currentUser, onLogCreated }: QRManagerProps) {
                 </div>
 
                 <button
-                  type="submit"
+                  type="button"
                   className="btn-primary scan-submit-btn"
+                  onClick={cameraActive ? stopCamera : startCamera}
                   disabled={loading}
                 >
-                  {scanning ? 'Analyzing QR Code...' : 'Simulate Scanning Library QR'} <Volume2 size={16} />
+                  {cameraActive ? 'Stop Camera Scanner' : 'Open Camera Scanner'} <Volume2 size={16} />
                 </button>
               </form>
+
+              <div className="scan-help-note">
+                <p>Open the camera scanner and point at the library gate QR to record your {scanType} pass.</p>
+              </div>
+
+              <canvas ref={canvasRef} style={{ display: 'none' }} />
             </div>
 
             {/* Student Log History */}
@@ -283,7 +367,6 @@ export function QRManager({ currentUser, onLogCreated }: QRManagerProps) {
               </div>
             </div>
           </div>
-        </div>
       )}
     </div>
   )

@@ -15,6 +15,8 @@ import {
   approveTransaction,
   returnBookTransaction,
   queueNotification,
+  fetchAllUsers,
+  registerUser,
   isUsingMock,
   uploadBookCover,
   uploadProfilePhoto,
@@ -49,7 +51,23 @@ import {
   History
 } from 'lucide-react'
 
-type View = 'overview' | 'catalog' | 'ai' | 'analytics' | 'reports' | 'qr' | 'storefront'
+type View = 'overview' | 'catalog' | 'ai' | 'analytics' | 'reports' | 'qr' | 'users' | 'storefront'
+
+type ExternalBookResult = {
+  key: string
+  title: string
+  authors: string
+  publishedDate: string
+  publisher: string
+  categories: string
+  description: string
+  coverUrl: string | null
+  previewUrl: string
+  infoUrl: string
+  buyUrl: string | null
+  accessViewStatus: string
+  embeddable: boolean
+}
 
 export default function App() {
   // Session State
@@ -61,12 +79,31 @@ export default function App() {
   // Database Data States
   const [books, setBooks] = useState<Book[]>([])
   const [transactions, setTransactions] = useState<Transaction[]>([])
+  const [users, setUsers] = useState<User[]>([])
+  const [newStudentName, setNewStudentName] = useState('')
+  const [newStudentUsername, setNewStudentUsername] = useState('')
+  const [newStudentPassword, setNewStudentPassword] = useState('')
+  const [newStudentPhone, setNewStudentPhone] = useState('+639')
+  const [newStudentProgramStrand, setNewStudentProgramStrand] = useState('BSIT')
+  const [newStudentAcademicLevel, setNewStudentAcademicLevel] = useState('1st Year')
+  const [newStudentError, setNewStudentError] = useState('')
+  const [newStudentSuccess, setNewStudentSuccess] = useState('')
+  const [newStudentLoading, setNewStudentLoading] = useState(false)
+  const [selectedManualBorrowStudentId, setSelectedManualBorrowStudentId] = useState<number | null>(null)
+  const [selectedManualBorrowBookId, setSelectedManualBorrowBookId] = useState<number | null>(null)
+  const [manualBorrowDueDays, setManualBorrowDueDays] = useState(7)
+  const [manualBorrowError, setManualBorrowError] = useState('')
+  const [manualBorrowSuccess, setManualBorrowSuccess] = useState('')
+  const [manualBorrowLoading, setManualBorrowLoading] = useState(false)
   
   // Interaction/Simulations States
   const [query, setQuery] = useState('')
   const [selectedCategory, setSelectedCategory] = useState('All')
   const [refreshSignal, setRefreshSignal] = useState(0)
   const [ebookToRead, setEbookToRead] = useState<Book | null>(null)
+  const [externalBookResults, setExternalBookResults] = useState<ExternalBookResult[]>([])
+  const [externalSearchStatus, setExternalSearchStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
+  const [externalSearchMessage, setExternalSearchMessage] = useState('')
   
   // Librarian Modals
   const [isAddBookOpen, setIsAddBookOpen] = useState(false)
@@ -100,6 +137,8 @@ export default function App() {
       setBooks(booksData)
       const txsData = await fetchTransactions()
       setTransactions(txsData)
+      const usersData = await fetchAllUsers()
+      setUsers(usersData)
     } catch (err) {
       console.error('Error loading library database:', err)
     }
@@ -111,11 +150,116 @@ export default function App() {
     loadDatabaseData()
   }, [])
 
+  const isStudent = currentUser?.role === 'Student'
+  const studentCount = useMemo(() => users.filter((u) => u.role === 'Student').length, [users])
+
+  useEffect(() => {
+    if (isStudent && (view === 'analytics' || view === 'reports' || view === 'users')) {
+      setView('overview')
+    }
+  }, [isStudent, view])
+
   // Handle Log Out
   const handleLogout = () => {
     setCurrentUser(null)
     setView('storefront')
     setStoreTab('home')
+  }
+
+  const resetNewStudentForm = () => {
+    setNewStudentName('')
+    setNewStudentUsername('')
+    setNewStudentPassword('')
+    setNewStudentPhone('+639')
+    setNewStudentProgramStrand('BSIT')
+    setNewStudentAcademicLevel('1st Year')
+    setNewStudentError('')
+    setNewStudentSuccess('')
+  }
+
+  const handleCreateStudent = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setNewStudentError('')
+    setNewStudentSuccess('')
+    setNewStudentLoading(true)
+
+    if (!newStudentName || !newStudentUsername || !newStudentPassword || !newStudentPhone) {
+      setNewStudentError('Please fill in all required student fields.')
+      setNewStudentLoading(false)
+      return
+    }
+
+    let formattedPhone = newStudentPhone.trim()
+    if (formattedPhone.startsWith('09')) {
+      formattedPhone = '+63' + formattedPhone.slice(1)
+    } else if (!formattedPhone.startsWith('+')) {
+      formattedPhone = '+63' + formattedPhone
+    }
+
+    try {
+      const student = await registerUser({
+        name: newStudentName.trim(),
+        username: newStudentUsername.toLowerCase().trim(),
+        password: newStudentPassword,
+        role: 'Student',
+        program_strand: newStudentProgramStrand,
+        academic_level: newStudentAcademicLevel,
+        phone_number: formattedPhone
+      })
+
+      if (!student) {
+        setNewStudentError('Unable to create student. Try another username.')
+      } else {
+        setUsers((prev) => [...prev, student])
+        setNewStudentSuccess('Student record created successfully.')
+        resetNewStudentForm()
+      }
+    } catch (err) {
+      console.error(err)
+      setNewStudentError('Unable to create student record. Please try again.')
+    } finally {
+      setNewStudentLoading(false)
+    }
+  }
+
+  const handleManualLendBook = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setManualBorrowError('')
+    setManualBorrowSuccess('')
+    setManualBorrowLoading(true)
+
+    const book = books.find((b) => b.book_id === selectedManualBorrowBookId)
+    const student = users.find((u) => u.user_id === selectedManualBorrowStudentId)
+
+    if (!student || !book) {
+      setManualBorrowError('Please select a student and a book to proceed.')
+      setManualBorrowLoading(false)
+      return
+    }
+
+    if (book.status !== 'Available' || (book.available_copies ?? 0) <= 0) {
+      setManualBorrowError('The selected book is not currently available for physical lending.')
+      setManualBorrowLoading(false)
+      return
+    }
+
+    const tx = await createTransaction(student.user_id, book.book_id, 'Borrowed', manualBorrowDueDays)
+    if (tx) {
+      setManualBorrowSuccess(`Issued “${book.title}” to ${student.name}. Due ${tx.due_date}.`)
+      setSelectedManualBorrowBookId(null)
+      setSelectedManualBorrowStudentId(null)
+      setManualBorrowDueDays(7)
+      loadDatabaseData()
+
+      if (student.phone_number) {
+        const msg = `MPCI Library: "${book.title}" has been issued to you. Return due date is ${tx.due_date}.`
+        await sendSMS(student.user_id, student.phone_number, msg, 'Transaction')
+      }
+    } else {
+      setManualBorrowError('Unable to issue the selected book. Please try again.')
+    }
+
+    setManualBorrowLoading(false)
   }
 
   // -------------------------------------------------------------
@@ -190,7 +334,7 @@ export default function App() {
       }
     }
 
-    let totalCopies = newBookTotalCopies
+    const totalCopies = newBookTotalCopies
     let availableCopies = newBookTotalCopies
 
     if (editingBookId) {
@@ -343,6 +487,30 @@ export default function App() {
     setEbookToRead(book)
   }
 
+  const handlePreviewExternalBook = (result: ExternalBookResult) => {
+    if (!result.embeddable) {
+      window.open(result.previewUrl, '_blank', 'noopener,noreferrer')
+      return
+    }
+
+    setEbookToRead({
+      book_id: -Date.now(),
+      title: result.title,
+      author: result.authors,
+      isbn: result.key,
+      category: result.categories,
+      program_strand_relevance: 'External',
+      status: 'E-book',
+      ebook_url: `google-books:${result.key}`,
+      content: null,
+      cover_image_url: result.coverUrl,
+      total_copies: 1,
+      available_copies: 1,
+      google_books_id: result.key,
+      google_preview_url: result.previewUrl
+    })
+  }
+
   // -------------------------------------------------------------
   // AI RECOMMENDATION LOGIC ENGINE
   // -------------------------------------------------------------
@@ -409,6 +577,134 @@ export default function App() {
       return matchSearch && matchCategory
     })
   }, [books, query, selectedCategory])
+
+  const externalSearchLinks = useMemo(() => {
+    const term = query.trim()
+    if (!term) return []
+
+    const encoded = encodeURIComponent(term)
+    return [
+      {
+        label: 'Google Books',
+        url: `https://www.google.com/search?q=${encoded}+book`
+      },
+      {
+        label: 'Open Library',
+        url: `https://openlibrary.org/search?q=${encoded}`
+      },
+      {
+        label: 'WorldCat',
+        url: `https://www.worldcat.org/search?q=${encoded}`
+      }
+    ]
+  }, [query])
+
+  useEffect(() => {
+    const term = query.trim()
+
+    if (!term) {
+      setExternalBookResults([])
+      setExternalSearchStatus('idle')
+      setExternalSearchMessage('')
+      return
+    }
+
+    const controller = new AbortController()
+    setExternalSearchStatus('loading')
+    setExternalSearchMessage('')
+
+    const timer = window.setTimeout(async () => {
+      try {
+        const googleBooksApiKey = import.meta.env.VITE_GOOGLE_BOOKS_API_KEY
+        const params = new URLSearchParams({
+          q: term,
+          maxResults: '8',
+          printType: 'books',
+          projection: 'lite'
+        })
+
+        if (googleBooksApiKey) {
+          params.set('key', googleBooksApiKey)
+        }
+
+        const response = await fetch(
+          `https://www.googleapis.com/books/v1/volumes?${params.toString()}`,
+          { signal: controller.signal }
+        )
+
+        if (!response.ok) {
+          throw new Error(response.status === 429
+            ? 'Google Books rate limit reached. Add VITE_GOOGLE_BOOKS_API_KEY in .env to make this reliable.'
+            : `Google Books search failed with status ${response.status}.`
+          )
+        }
+
+        const payload: {
+          items?: Array<{
+            id?: string
+            volumeInfo?: {
+              title?: string
+              authors?: string[]
+              publisher?: string
+              publishedDate?: string
+              description?: string
+              categories?: string[]
+              imageLinks?: {
+                thumbnail?: string
+                smallThumbnail?: string
+              }
+              previewLink?: string
+              infoLink?: string
+            }
+            saleInfo?: {
+              buyLink?: string
+            }
+            accessInfo?: {
+              webReaderLink?: string
+              accessViewStatus?: string
+              embeddable?: boolean
+            }
+          }>
+        } = await response.json()
+
+        const results = (payload.items || [])
+          .filter((item) => item.id && item.volumeInfo?.title)
+          .map((item) => ({
+            key: item.id as string,
+            title: item.volumeInfo?.title || 'Untitled book',
+            authors: item.volumeInfo?.authors?.slice(0, 3).join(', ') || 'Author not listed',
+            publishedDate: item.volumeInfo?.publishedDate || 'Date not listed',
+            publisher: item.volumeInfo?.publisher || 'Publisher not listed',
+            categories: item.volumeInfo?.categories?.slice(0, 2).join(', ') || 'Category not listed',
+            description: item.volumeInfo?.description
+              ? item.volumeInfo.description.replace(/<[^>]+>/g, '').slice(0, 180)
+              : 'No description available from Google Books.',
+            coverUrl: (item.volumeInfo?.imageLinks?.thumbnail || item.volumeInfo?.imageLinks?.smallThumbnail || null)?.replace('http:', 'https:') || null,
+            previewUrl: item.volumeInfo?.previewLink || item.accessInfo?.webReaderLink || item.volumeInfo?.infoLink || `https://books.google.com/books?id=${item.id}`,
+            infoUrl: item.volumeInfo?.infoLink || `https://books.google.com/books?id=${item.id}`,
+            buyUrl: item.saleInfo?.buyLink || null,
+            accessViewStatus: item.accessInfo?.accessViewStatus || 'UNKNOWN',
+            embeddable: item.accessInfo?.embeddable === true
+          }))
+
+        setExternalBookResults(results)
+        setExternalSearchStatus('ready')
+        setExternalSearchMessage('')
+      } catch (err) {
+        if (!controller.signal.aborted) {
+          console.error('External book search error:', err)
+          setExternalBookResults([])
+          setExternalSearchStatus('error')
+          setExternalSearchMessage(err instanceof Error ? err.message : 'Google Books results are unavailable right now.')
+        }
+      }
+    }, 450)
+
+    return () => {
+      controller.abort()
+      window.clearTimeout(timer)
+    }
+  }, [query])
 
   // Get cover graphic class based on index
   const getCoverClass = (index: number) => {
@@ -496,11 +792,11 @@ export default function App() {
     if (currentUser.role === 'Librarian' || currentUser.role === 'Administrator') {
       return {
         title: 'Librarian / Admin Console',
-        description: 'Approve borrowing requests, update returns, monitor overdue books, scan QR entries, and export official reports.',
+        description: 'Approve borrowing requests, update returns, monitor overdue books, scan QR entries, export reports, and create student records offline.',
         primary: 'Open Catalog',
-        secondary: 'View Reports',
+        secondary: 'Manage Students',
         primaryView: 'catalog' as View,
-        secondaryView: 'reports' as View
+        secondaryView: 'users' as View
       }
     }
 
@@ -861,9 +1157,23 @@ export default function App() {
                   
                   <div className="store-grid">
                     {filteredBooks.length === 0 ? (
-                      <p className="empty-msg" style={{ gridColumn: 'span 4' }}>
-                        No matching books found. Try searching for "design", "IT", or "CCNA".
-                      </p>
+                      <div className="empty-msg" style={{ gridColumn: 'span 4', textAlign: 'center' }}>
+                        <p>No matching books found in the local catalog.</p>
+                        {query.trim() ? (
+                          <>
+                            <p>Check Google Books results below, or search these sources directly:</p>
+                            <div className="external-search-links">
+                              {externalSearchLinks.map((link) => (
+                                <a key={link.label} href={link.url} target="_blank" rel="noreferrer" className="external-link-btn">
+                                  {link.label}
+                                </a>
+                              ))}
+                            </div>
+                          </>
+                        ) : (
+                          <p>Try searching for keywords like "design", "IT", or "CCNA".</p>
+                        )}
+                      </div>
                     ) : (
                       filteredBooks.map((book, index) => (
                         <div key={book.book_id} className="book-store-card">
@@ -932,6 +1242,75 @@ export default function App() {
                       ))
                     )}
                   </div>
+
+                  {query.trim() && (
+                    <div className="search-engine-results">
+                      <div className="search-engine-heading">
+                        <div>
+                          <p className="eyebrow">Online search</p>
+                          <h3>Google Books results for "{query.trim()}"</h3>
+                        </div>
+                        <span>{externalSearchStatus === 'loading' ? 'Searching...' : `${externalBookResults.length} results`}</span>
+                      </div>
+
+                      {externalSearchStatus === 'error' && (
+                        <p className="external-search-status">
+                          {externalSearchMessage || 'Google Books results are unavailable right now.'}
+                        </p>
+                      )}
+
+                      {externalSearchStatus === 'loading' && (
+                        <p className="external-search-status">Searching Google Books...</p>
+                      )}
+
+                      {externalSearchStatus === 'ready' && externalBookResults.length === 0 && (
+                        <p className="external-search-status">No Google Books results found for this search.</p>
+                      )}
+
+                      {externalBookResults.length > 0 && (
+                        <div className="external-book-results">
+                          {externalBookResults.map((result) => (
+                            <article key={result.key} className="external-book-card">
+                              {result.coverUrl ? (
+                                <img src={result.coverUrl} alt={result.title} />
+                              ) : (
+                                <div className="external-book-cover-placeholder">
+                                  <BookOpen size={24} />
+                                </div>
+                              )}
+                              <div>
+                                <span className="external-source-label">Google Books</span>
+                                <h4>{result.title}</h4>
+                                <p>{result.authors}</p>
+                                <span>{result.publisher} • {result.publishedDate}</span>
+                                <span>{result.categories}</span>
+                                <span className={`google-access-pill ${result.embeddable ? 'is-embeddable' : ''}`}>
+                                  {result.embeddable ? 'Embeddable preview' : result.accessViewStatus.replaceAll('_', ' ').toLowerCase()}
+                                </span>
+                                <p className="external-book-description">{result.description}</p>
+                                <div className="external-book-actions">
+                                  <button type="button" className="external-link-btn" onClick={() => handlePreviewExternalBook(result)}>
+                                    <BookOpen size={14} />
+                                    {result.embeddable ? 'Read Preview' : 'Open Preview'}
+                                  </button>
+                                  <a href={result.infoUrl} target="_blank" rel="noreferrer">
+                                    <Info size={14} />
+                                    Details
+                                  </a>
+                                  {result.buyUrl && (
+                                    <a href={result.buyUrl} target="_blank" rel="noreferrer">
+                                      <ShoppingBag size={14} />
+                                      Buy
+                                    </a>
+                                  )}
+                                </div>
+                              </div>
+                            </article>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </section>
               </>
             )}
@@ -1000,12 +1379,21 @@ export default function App() {
           <button className={view === 'qr' ? 'active' : ''} onClick={() => setView('qr')}>
             <QrCode size={18} /> QR Gate Pass
           </button>
-          <button className={view === 'analytics' ? 'active' : ''} onClick={() => setView('analytics')}>
-            <TrendingUp size={18} /> Analytics
-          </button>
-          <button className={view === 'reports' ? 'active' : ''} onClick={() => setView('reports')}>
-            <FileText size={18} /> Reports
-          </button>
+          {!isStudent && (
+            <>
+              <button className={view === 'analytics' ? 'active' : ''} onClick={() => setView('analytics')}>
+                <TrendingUp size={18} /> Analytics
+              </button>
+              <button className={view === 'reports' ? 'active' : ''} onClick={() => setView('reports')}>
+                <FileText size={18} /> Reports
+              </button>
+              {(currentUser.role === 'Librarian' || currentUser.role === 'Administrator') && (
+                <button className={view === 'users' ? 'active' : ''} onClick={() => setView('users')}>
+                  <UserCheck size={18} /> Student Records
+                </button>
+              )}
+            </>
+          )}
         </nav>
 
         {/* LOGGED IN USER PROFILE FOOTER */}
@@ -1082,9 +1470,11 @@ export default function App() {
                   <button className="btn-primary" onClick={() => setView(roleFocus.primaryView)}>
                     {roleFocus.primary}
                   </button>
-                  <button className="btn-secondary" onClick={() => setView(roleFocus.secondaryView)}>
-                    {roleFocus.secondary}
-                  </button>
+                  {currentUser?.role !== 'Student' && (
+                    <button className="btn-secondary" onClick={() => setView(roleFocus.secondaryView)}>
+                      {roleFocus.secondary}
+                    </button>
+                  )}
                 </div>
               </div>
               <div className="logo-stage">
@@ -1798,6 +2188,198 @@ export default function App() {
                 </button>
               </div>
 
+            </div>
+          </div>
+        )}
+
+        {view === 'users' && (currentUser.role === 'Librarian' || currentUser.role === 'Administrator') && (
+          <div className="panel-card">
+            <div className="panel-card-header">
+              <div className="panel-title">
+                <UserCheck size={20} />
+                <h3>Student Record Builder</h3>
+              </div>
+              <p className="panel-subtitle">
+                Create student accounts offline and keep borrower profiles ready for book requests.
+              </p>
+            </div>
+
+            <div className="form-grid">
+              <div className="panel-card-inner">
+                {newStudentError && <div className="login-alert error">{newStudentError}</div>}
+                {newStudentSuccess && <div className="login-alert success">{newStudentSuccess}</div>}
+                <form onSubmit={handleCreateStudent} className="admin-form">
+                  <div className="form-group">
+                    <label htmlFor="student-name">Student Full Name</label>
+                    <input
+                      id="student-name"
+                      type="text"
+                      value={newStudentName}
+                      onChange={(e) => setNewStudentName(e.target.value)}
+                      placeholder="Juan Dela Cruz"
+                      required
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label htmlFor="student-username">Student Username</label>
+                    <input
+                      id="student-username"
+                      type="text"
+                      value={newStudentUsername}
+                      onChange={(e) => setNewStudentUsername(e.target.value)}
+                      placeholder="juan123"
+                      required
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label htmlFor="student-password">Temporary Password</label>
+                    <input
+                      id="student-password"
+                      type="password"
+                      value={newStudentPassword}
+                      onChange={(e) => setNewStudentPassword(e.target.value)}
+                      placeholder="Password for student login"
+                      required
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label htmlFor="student-phone">Phone Number</label>
+                    <input
+                      id="student-phone"
+                      type="text"
+                      value={newStudentPhone}
+                      onChange={(e) => setNewStudentPhone(e.target.value)}
+                      placeholder="+639123456789"
+                      required
+                    />
+                  </div>
+
+                  <div className="form-row-2">
+                    <div className="form-group">
+                      <label htmlFor="student-strand">Program / Strand</label>
+                      <select
+                        id="student-strand"
+                        value={newStudentProgramStrand}
+                        onChange={(e) => setNewStudentProgramStrand(e.target.value)}
+                      >
+                        <option value="BSIT">BSIT</option>
+                        <option value="BSA">BSA</option>
+                        <option value="BSBA">BSBA</option>
+                        <option value="BSED">BSED</option>
+                        <option value="General">General</option>
+                        <option value="Grade 11 - STEM">Grade 11 - STEM</option>
+                        <option value="Grade 12 - ICT">Grade 12 - ICT</option>
+                      </select>
+                    </div>
+
+                    <div className="form-group">
+                      <label htmlFor="student-level">Academic Level</label>
+                      <select
+                        id="student-level"
+                        value={newStudentAcademicLevel}
+                        onChange={(e) => setNewStudentAcademicLevel(e.target.value)}
+                      >
+                        <option value="1st Year">1st Year College</option>
+                        <option value="2nd Year">2nd Year College</option>
+                        <option value="3rd Year">3rd Year College</option>
+                        <option value="4th Year">4th Year College</option>
+                        <option value="Grade 11">Grade 11 Senior High</option>
+                        <option value="Grade 12">Grade 12 Senior High</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <button type="submit" className="btn-primary" disabled={newStudentLoading}>
+                    {newStudentLoading ? 'Saving Student...' : 'Create Student Record'}
+                  </button>
+                </form>
+
+                <div className="manual-lend-block">
+                  <h4>Manual Checkout for Offline Students</h4>
+                  <p className="panel-subtitle">Issue a physical book to a student directly when they can’t access the web app.</p>
+                  {manualBorrowError && <div className="login-alert error">{manualBorrowError}</div>}
+                  {manualBorrowSuccess && <div className="login-alert success">{manualBorrowSuccess}</div>}
+                  <form onSubmit={handleManualLendBook} className="admin-form">
+                    <div className="form-group">
+                      <label htmlFor="manual-student">Student Account</label>
+                      <select
+                        id="manual-student"
+                        value={selectedManualBorrowStudentId ?? ''}
+                        onChange={(e) => setSelectedManualBorrowStudentId(Number(e.target.value) || null)}
+                      >
+                        <option value="">Select student</option>
+                        {users.filter((u) => u.role === 'Student').map((student) => (
+                          <option key={student.user_id} value={student.user_id}>
+                            {student.name} — {student.username}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="form-group">
+                      <label htmlFor="manual-book">Available Book</label>
+                      <select
+                        id="manual-book"
+                        value={selectedManualBorrowBookId ?? ''}
+                        onChange={(e) => setSelectedManualBorrowBookId(Number(e.target.value) || null)}
+                      >
+                        <option value="">Select book</option>
+                        {books.filter((book) => book.status === 'Available' && (book.available_copies ?? 0) > 0).map((book) => (
+                          <option key={book.book_id} value={book.book_id}>
+                            {book.title} — {book.author}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="form-row-2">
+                      <div className="form-group">
+                        <label htmlFor="manual-due-days">Due Days</label>
+                        <input
+                          id="manual-due-days"
+                          type="number"
+                          min={1}
+                          value={manualBorrowDueDays}
+                          onChange={(e) => setManualBorrowDueDays(Math.max(1, Number(e.target.value) || 7))}
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label>&nbsp;</label>
+                        <button type="submit" className="btn-primary" disabled={manualBorrowLoading}>
+                          {manualBorrowLoading ? 'Issuing...' : 'Issue Book Now'}
+                        </button>
+                      </div>
+                    </div>
+                  </form>
+                </div>
+              </div>
+
+              <div className="panel-card-inner">
+                <div className="panel-card-inner-header">
+                  <div>
+                    <h4>Existing Student Records</h4>
+                    <p className="panel-subtitle">Total student accounts: {studentCount}</p>
+                  </div>
+                </div>
+                <div className="user-list">
+                  {studentCount === 0 ? (
+                    <p className="empty-msg">No student records found yet.</p>
+                  ) : (
+                    users.filter((u) => u.role === 'Student').map((student) => (
+                      <div key={student.user_id} className="user-list-item">
+                        <div>
+                          <strong>{student.name}</strong>
+                          <span>{student.username} • {student.program_strand || 'General'} • {student.academic_level || 'N/A'}</span>
+                        </div>
+                        <span>{student.phone_number || 'No phone'}</span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
             </div>
           </div>
         )}

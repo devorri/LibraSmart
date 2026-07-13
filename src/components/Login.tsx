@@ -1,7 +1,7 @@
 import React, { useState } from 'react'
 import { authenticateUser, registerUser } from '../lib/supabase'
 import type { User } from '../lib/supabase'
-import { UserCheck, UserPlus, Lock, User as UserIcon, Phone, BookOpen, GraduationCap } from 'lucide-react'
+import { UserCheck, UserPlus, Lock, User as UserIcon, Phone, BookOpen, GraduationCap, Eye, EyeOff } from 'lucide-react'
 
 interface LoginProps {
   onLoginSuccess: (user: User) => void
@@ -19,6 +19,7 @@ export function Login({ onLoginSuccess }: LoginProps) {
   const [errorMsg, setErrorMsg] = useState('')
   const [successMsg, setSuccessMsg] = useState('')
   const [loading, setLoading] = useState(false)
+  const [showPassword, setShowPassword] = useState(false)
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -95,7 +96,7 @@ export function Login({ onLoginSuccess }: LoginProps) {
 
   return (
     <div className="login-container">
-      <div className="login-card">
+      <div className={`login-card ${isRegistering ? 'login-card-register' : ''}`}>
         <div className="login-header">
           <img src="/librasmart-logo-1024.png" alt="LibraSmart Logo" className="login-logo" />
           <h2>LibraSmart</h2>
@@ -130,12 +131,21 @@ export function Login({ onLoginSuccess }: LoginProps) {
               </label>
               <input
                 id="password"
-                type="password"
+                type={showPassword ? 'text' : 'password'}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="••••••••"
                 required
               />
+              <button
+                type="button"
+                className="password-toggle"
+                onClick={() => setShowPassword((visible) => !visible)}
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
+              >
+                {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                {showPassword ? 'Hide password' : 'Show password'}
+              </button>
             </div>
 
             <button type="submit" className="btn-primary login-btn" disabled={loading}>
@@ -185,12 +195,21 @@ export function Login({ onLoginSuccess }: LoginProps) {
               </label>
               <input
                 id="reg-password"
-                type="password"
+                type={showPassword ? 'text' : 'password'}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="Password"
                 required
               />
+              <button
+                type="button"
+                className="password-toggle"
+                onClick={() => setShowPassword((visible) => !visible)}
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
+              >
+                {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                {showPassword ? 'Hide password' : 'Show password'}
+              </button>
             </div>
 
             <div className="form-group">

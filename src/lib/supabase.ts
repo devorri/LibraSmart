@@ -32,6 +32,8 @@ export interface Book {
   cover_image_url?: string | null
   total_copies?: number
   available_copies?: number
+  google_books_id?: string | null
+  google_preview_url?: string | null
 }
 
 export interface Transaction {
@@ -307,7 +309,7 @@ export async function fetchTransactions(): Promise<Transaction[]> {
   }
 }
 
-export async function createTransaction(user_id: number, book_id: number, dueDays = 7): Promise<Transaction | null> {
+export async function createTransaction(user_id: number, book_id: number, status: 'Requested' | 'Borrowed' = 'Requested', dueDays = 7): Promise<Transaction | null> {
   const borrowDate = new Date().toISOString().split('T')[0]
   const dueDate = new Date(Date.now() + dueDays * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
 
@@ -320,7 +322,7 @@ export async function createTransaction(user_id: number, book_id: number, dueDay
       borrow_date: borrowDate,
       due_date: dueDate,
       return_date: null,
-      status: 'Requested'
+      status
     }
     txs.unshift(newTx)
     saveStoredMock('transactions', txs)
@@ -363,7 +365,7 @@ export async function createTransaction(user_id: number, book_id: number, dueDay
         book_id,
         borrow_date: borrowDate,
         due_date: dueDate,
-        status: 'Requested'
+        status
       }])
       .select()
       .single()

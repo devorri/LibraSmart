@@ -1,10 +1,49 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { Book } from '../lib/supabase'
-import { X, Type, Sun, Moon, Compass, ChevronLeft, ChevronRight, FileText } from 'lucide-react'
+import { X, Type, Sun, Moon, Compass, ChevronLeft, ChevronRight, FileText, ExternalLink } from 'lucide-react'
 
 interface EbookReaderProps {
   book: Book
   onClose: () => void
+}
+
+declare global {
+  interface Window {
+    google?: {
+      books?: {
+        load: (options?: { language?: string }) => void
+        setOnLoadCallback: (callback: () => void) => void
+        DefaultViewer: new (container: HTMLElement) => {
+          load: (identifier: string, notFoundCallback?: () => void, successCallback?: () => void) => void
+        }
+      }
+    }
+  }
+}
+
+let googleBooksScriptPromise: Promise<void> | null = null
+
+const loadGoogleBooksScript = () => {
+  if (window.google?.books) return Promise.resolve()
+  if (googleBooksScriptPromise) return googleBooksScriptPromise
+
+  googleBooksScriptPromise = new Promise<void>((resolve, reject) => {
+    const existingScript = document.querySelector<HTMLScriptElement>('script[src="https://www.google.com/books/jsapi.js"]')
+    if (existingScript) {
+      existingScript.addEventListener('load', () => resolve(), { once: true })
+      existingScript.addEventListener('error', () => reject(new Error('Google Books viewer failed to load.')), { once: true })
+      return
+    }
+
+    const script = document.createElement('script')
+    script.src = 'https://www.google.com/books/jsapi.js'
+    script.async = true
+    script.onload = () => resolve()
+    script.onerror = () => reject(new Error('Google Books viewer failed to load.'))
+    document.head.appendChild(script)
+  })
+
+  return googleBooksScriptPromise
 }
 
 export function EbookReader({ book, onClose }: EbookReaderProps) {
@@ -12,6 +51,13 @@ export function EbookReader({ book, onClose }: EbookReaderProps) {
   const [fontSize, setFontSize] = useState<'sm' | 'md' | 'lg'>('md')
   const [fontFamily, setFontFamily] = useState<'serif' | 'sans' | 'mono'>('serif')
   const [currentPage, setCurrentPage] = useState(1)
+  const [googleViewerStatus, setGoogleViewerStatus] = useState<'loading' | 'ready' | 'error'>('loading')
+  const googleViewerRef = useRef<HTMLDivElement>(null)
+
+  const googleBooksIdentifier = book.ebook_url?.startsWith('google-books:')
+    ? book.ebook_url.replace('google-books:', '')
+    : book.google_books_id || null
+  const isGoogleBooksPreview = !!googleBooksIdentifier
 
   const isPDF = !!(
     book.ebook_url && (
@@ -20,6 +66,41 @@ export function EbookReader({ book, onClose }: EbookReaderProps) {
       book.ebook_url.startsWith('data:application/pdf')
     )
   )
+
+  useEffect(() => {
+    if (!isGoogleBooksPreview || !googleBooksIdentifier) return
+
+    let cancelled = false
+    setGoogleViewerStatus('loading')
+
+    loadGoogleBooksScript()
+      .then(() => {
+        if (cancelled || !window.google?.books) return
+
+        window.google.books.load()
+        window.google.books.setOnLoadCallback(() => {
+          if (cancelled || !googleViewerRef.current || !window.google?.books) return
+
+          const viewer = new window.google.books.DefaultViewer(googleViewerRef.current)
+          viewer.load(
+            googleBooksIdentifier,
+            () => {
+              if (!cancelled) setGoogleViewerStatus('error')
+            },
+            () => {
+              if (!cancelled) setGoogleViewerStatus('ready')
+            }
+          )
+        })
+      })
+      .catch(() => {
+        if (!cancelled) setGoogleViewerStatus('error')
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [googleBooksIdentifier, isGoogleBooksPreview])
 
   // Default content fallback in case book text is blank
   const defaultEbookContent = `Chapter 1: Foundations of the Discipline
@@ -139,7 +220,29 @@ By integrating these features, modern educational resources become interactive h
         </header>
 
         {/* Content Pane */}
-        {isPDF ? (
+        {isGoogleBooksPreview ? (
+          <main className="reader-content google-books-reader-mode">
+            {googleViewerStatus === 'loading' && (
+              <div className="google-books-reader-status">
+                <FileText size={28} />
+                <span>Loading Google Books preview...</span>
+              </div>
+            )}
+            {googleViewerStatus === 'error' && (
+              <div className="google-books-reader-status">
+                <FileText size={28} />
+                <span>Google Books cannot embed this preview here.</span>
+                {book.google_preview_url && (
+                  <a href={book.google_preview_url} target="_blank" rel="noreferrer" className="external-link-btn">
+                    <ExternalLink size={14} />
+                    Open on Google Books
+                  </a>
+                )}
+              </div>
+            )}
+            <div ref={googleViewerRef} className="google-books-viewer" />
+          </main>
+        ) : isPDF ? (
           <main className="reader-content pdf-reader-mode" style={{ padding: 0, height: 'calc(100vh - 70px)' }}>
             <iframe
               src={book.ebook_url || ''}
