@@ -130,7 +130,6 @@ export function QRManager({ currentUser, onLogCreated }: QRManagerProps) {
   }
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     loadData()
   }, [currentUser])
 

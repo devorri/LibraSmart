@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { fetchNotifications } from '../lib/supabase'
 import type { Notification, User } from '../lib/supabase'
 import { Smartphone, X, Bell, ShieldAlert, CheckCheck } from 'lucide-react'
@@ -13,6 +13,7 @@ export function SMSPhoneSimulator({ currentUser, triggerRefreshSignal }: SMSPhon
   const [notifications, setNotifications] = useState<Notification[]>([])
   const [unreadCount, setUnreadCount] = useState(0)
   const [activeBanner, setActiveBanner] = useState<Notification | null>(null)
+  const previousNotificationCountRef = useRef(0)
 
   // Load notifications
   useEffect(() => {
@@ -26,7 +27,7 @@ export function SMSPhoneSimulator({ currentUser, triggerRefreshSignal }: SMSPhon
           : data.filter(n => n.user_id === currentUser.user_id)
 
         // Detect if there is a brand new notification that wasn't in our previous list
-        if (notifications.length > 0 && data.length > notifications.length) {
+        if (previousNotificationCountRef.current > 0 && data.length > previousNotificationCountRef.current) {
           const newNotif = data[0] // Since it's sorted by date_sent desc
           // Show slide-down notification banner
           if (currentUser.role === 'Librarian' || currentUser.role === 'Administrator' || newNotif.user_id === currentUser.user_id) {
@@ -38,6 +39,7 @@ export function SMSPhoneSimulator({ currentUser, triggerRefreshSignal }: SMSPhon
             }, 5000)
           }
         }
+        previousNotificationCountRef.current = data.length
         setNotifications(userNotifs)
       } catch (err) {
         console.error("Error loading notifications in simulator:", err)

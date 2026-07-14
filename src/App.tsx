@@ -69,6 +69,13 @@ type ExternalBookResult = {
   embeddable: boolean
 }
 
+const restrictedStudentViews: View[] = ['analytics', 'reports', 'users']
+
+const createExternalBookId = (key: string) => {
+  const hash = Array.from(key).reduce((total, char) => ((total * 31) + char.charCodeAt(0)) >>> 0, 7)
+  return -Math.max(1, hash)
+}
+
 export default function App() {
   // Session State
   const [currentUser, setCurrentUser] = useState<User | null>(null)
@@ -102,6 +109,7 @@ export default function App() {
   const [refreshSignal, setRefreshSignal] = useState(0)
   const [ebookToRead, setEbookToRead] = useState<Book | null>(null)
   const [externalBookResults, setExternalBookResults] = useState<ExternalBookResult[]>([])
+  const [externalSearchQuery, setExternalSearchQuery] = useState('')
   const [externalSearchStatus, setExternalSearchStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
   const [externalSearchMessage, setExternalSearchMessage] = useState('')
   
@@ -153,11 +161,9 @@ export default function App() {
   const isStudent = currentUser?.role === 'Student'
   const studentCount = useMemo(() => users.filter((u) => u.role === 'Student').length, [users])
 
-  useEffect(() => {
-    if (isStudent && (view === 'analytics' || view === 'reports' || view === 'users')) {
-      setView('overview')
-    }
-  }, [isStudent, view])
+  const navigateToView = (nextView: View) => {
+    setView(isStudent && restrictedStudentViews.includes(nextView) ? 'overview' : nextView)
+  }
 
   // Handle Log Out
   const handleLogout = () => {
@@ -494,7 +500,7 @@ export default function App() {
     }
 
     setEbookToRead({
-      book_id: -Date.now(),
+      book_id: createExternalBookId(result.key),
       title: result.title,
       author: result.authors,
       isbn: result.key,
@@ -599,19 +605,25 @@ export default function App() {
     ]
   }, [query])
 
+  const hasExternalSearchTerm = query.trim().length > 0
+  const visibleExternalSearchTerm = query.trim()
+  const hasCurrentExternalSearch = externalSearchQuery === visibleExternalSearchTerm
+  const visibleExternalBookResults = hasExternalSearchTerm && hasCurrentExternalSearch ? externalBookResults : []
+  const visibleExternalSearchStatus = !hasExternalSearchTerm
+    ? 'idle'
+    : hasCurrentExternalSearch
+      ? externalSearchStatus
+      : 'loading'
+  const visibleExternalSearchMessage = hasExternalSearchTerm && hasCurrentExternalSearch ? externalSearchMessage : ''
+
   useEffect(() => {
     const term = query.trim()
 
     if (!term) {
-      setExternalBookResults([])
-      setExternalSearchStatus('idle')
-      setExternalSearchMessage('')
       return
     }
 
     const controller = new AbortController()
-    setExternalSearchStatus('loading')
-    setExternalSearchMessage('')
 
     const timer = window.setTimeout(async () => {
       try {
@@ -687,12 +699,14 @@ export default function App() {
             embeddable: item.accessInfo?.embeddable === true
           }))
 
+        setExternalSearchQuery(term)
         setExternalBookResults(results)
         setExternalSearchStatus('ready')
         setExternalSearchMessage('')
       } catch (err) {
         if (!controller.signal.aborted) {
           console.error('External book search error:', err)
+          setExternalSearchQuery(term)
           setExternalBookResults([])
           setExternalSearchStatus('error')
           setExternalSearchMessage(err instanceof Error ? err.message : 'Google Books results are unavailable right now.')
@@ -931,7 +945,7 @@ export default function App() {
             </div>
 
             {currentUser ? (
-              <button className="btn-primary" onClick={() => setView('overview')}>
+              <button className="btn-primary" onClick={() => navigateToView('overview')}>
                 <Compass size={16} /> My Dashboard
               </button>
             ) : (
@@ -1250,26 +1264,26 @@ export default function App() {
                           <p className="eyebrow">Online search</p>
                           <h3>Google Books results for "{query.trim()}"</h3>
                         </div>
-                        <span>{externalSearchStatus === 'loading' ? 'Searching...' : `${externalBookResults.length} results`}</span>
+                        <span>{visibleExternalSearchStatus === 'loading' ? 'Searching...' : `${visibleExternalBookResults.length} results`}</span>
                       </div>
 
-                      {externalSearchStatus === 'error' && (
+                      {visibleExternalSearchStatus === 'error' && (
                         <p className="external-search-status">
-                          {externalSearchMessage || 'Google Books results are unavailable right now.'}
+                          {visibleExternalSearchMessage || 'Google Books results are unavailable right now.'}
                         </p>
                       )}
 
-                      {externalSearchStatus === 'loading' && (
+                      {visibleExternalSearchStatus === 'loading' && (
                         <p className="external-search-status">Searching Google Books...</p>
                       )}
 
-                      {externalSearchStatus === 'ready' && externalBookResults.length === 0 && (
+                      {visibleExternalSearchStatus === 'ready' && visibleExternalBookResults.length === 0 && (
                         <p className="external-search-status">No Google Books results found for this search.</p>
                       )}
 
-                      {externalBookResults.length > 0 && (
+                      {visibleExternalBookResults.length > 0 && (
                         <div className="external-book-results">
-                          {externalBookResults.map((result) => (
+                          {visibleExternalBookResults.map((result) => (
                             <article key={result.key} className="external-book-card">
                               {result.coverUrl ? (
                                 <img src={result.coverUrl} alt={result.title} />
@@ -1328,7 +1342,7 @@ export default function App() {
               <Login onLoginSuccess={(user) => {
                 setCurrentUser(user)
                 setShowLoginModal(false)
-                setView('overview')
+                navigateToView('overview')
               }} />
             </div>
           </div>
@@ -1358,37 +1372,37 @@ export default function App() {
         </a>
 
         <nav>
-          <button className={view === 'overview' ? 'active' : ''} onClick={() => setView('overview')}>
+          <button className={view === 'overview' ? 'active' : ''} onClick={() => navigateToView('overview')}>
             <BookMarked size={18} /> Overview
           </button>
           
           {/* Link back to store view */}
-          <button className={(view as string) === 'storefront' ? 'active' : ''} onClick={() => { setView('storefront'); setStoreTab('catalog'); }}>
+          <button className={(view as string) === 'storefront' ? 'active' : ''} onClick={() => { navigateToView('storefront'); setStoreTab('catalog'); }}>
             <ShoppingBag size={18} /> Book Storefront
           </button>
 
-          <button className={view === 'catalog' ? 'active' : ''} onClick={() => setView('catalog')}>
+          <button className={view === 'catalog' ? 'active' : ''} onClick={() => navigateToView('catalog')}>
             <BookOpen size={18} /> Book Catalog
           </button>
           
           {currentUser.role !== 'Librarian' && currentUser.role !== 'Administrator' && (
-            <button className={view === 'ai' ? 'active' : ''} onClick={() => setView('ai')}>
+            <button className={view === 'ai' ? 'active' : ''} onClick={() => navigateToView('ai')}>
               <Sparkles size={18} /> AI Recommendations
             </button>
           )}
-          <button className={view === 'qr' ? 'active' : ''} onClick={() => setView('qr')}>
+          <button className={view === 'qr' ? 'active' : ''} onClick={() => navigateToView('qr')}>
             <QrCode size={18} /> QR Gate Pass
           </button>
           {!isStudent && (
             <>
-              <button className={view === 'analytics' ? 'active' : ''} onClick={() => setView('analytics')}>
+              <button className={view === 'analytics' ? 'active' : ''} onClick={() => navigateToView('analytics')}>
                 <TrendingUp size={18} /> Analytics
               </button>
-              <button className={view === 'reports' ? 'active' : ''} onClick={() => setView('reports')}>
+              <button className={view === 'reports' ? 'active' : ''} onClick={() => navigateToView('reports')}>
                 <FileText size={18} /> Reports
               </button>
               {(currentUser.role === 'Librarian' || currentUser.role === 'Administrator') && (
-                <button className={view === 'users' ? 'active' : ''} onClick={() => setView('users')}>
+                <button className={view === 'users' ? 'active' : ''} onClick={() => navigateToView('users')}>
                   <UserCheck size={18} /> Student Records
                 </button>
               )}
@@ -1467,11 +1481,11 @@ export default function App() {
                   {roleFocus.description}
                 </p>
                 <div className="hero-actions">
-                  <button className="btn-primary" onClick={() => setView(roleFocus.primaryView)}>
+                  <button className="btn-primary" onClick={() => navigateToView(roleFocus.primaryView)}>
                     {roleFocus.primary}
                   </button>
                   {currentUser?.role !== 'Student' && (
-                    <button className="btn-secondary" onClick={() => setView(roleFocus.secondaryView)}>
+                    <button className="btn-secondary" onClick={() => navigateToView(roleFocus.secondaryView)}>
                       {roleFocus.secondary}
                     </button>
                   )}

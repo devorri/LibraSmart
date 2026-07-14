@@ -51,13 +51,19 @@ export function EbookReader({ book, onClose }: EbookReaderProps) {
   const [fontSize, setFontSize] = useState<'sm' | 'md' | 'lg'>('md')
   const [fontFamily, setFontFamily] = useState<'serif' | 'sans' | 'mono'>('serif')
   const [currentPage, setCurrentPage] = useState(1)
-  const [googleViewerStatus, setGoogleViewerStatus] = useState<'loading' | 'ready' | 'error'>('loading')
+  const [googleViewerState, setGoogleViewerState] = useState<{
+    identifier: string | null
+    status: 'ready' | 'error'
+  }>({ identifier: null, status: 'ready' })
   const googleViewerRef = useRef<HTMLDivElement>(null)
 
   const googleBooksIdentifier = book.ebook_url?.startsWith('google-books:')
     ? book.ebook_url.replace('google-books:', '')
     : book.google_books_id || null
   const isGoogleBooksPreview = !!googleBooksIdentifier
+  const googleViewerStatus = isGoogleBooksPreview && googleViewerState.identifier !== googleBooksIdentifier
+    ? 'loading'
+    : googleViewerState.status
 
   const isPDF = !!(
     book.ebook_url && (
@@ -71,7 +77,6 @@ export function EbookReader({ book, onClose }: EbookReaderProps) {
     if (!isGoogleBooksPreview || !googleBooksIdentifier) return
 
     let cancelled = false
-    setGoogleViewerStatus('loading')
 
     loadGoogleBooksScript()
       .then(() => {
@@ -85,16 +90,16 @@ export function EbookReader({ book, onClose }: EbookReaderProps) {
           viewer.load(
             googleBooksIdentifier,
             () => {
-              if (!cancelled) setGoogleViewerStatus('error')
+              if (!cancelled) setGoogleViewerState({ identifier: googleBooksIdentifier, status: 'error' })
             },
             () => {
-              if (!cancelled) setGoogleViewerStatus('ready')
+              if (!cancelled) setGoogleViewerState({ identifier: googleBooksIdentifier, status: 'ready' })
             }
           )
         })
       })
       .catch(() => {
-        if (!cancelled) setGoogleViewerStatus('error')
+        if (!cancelled) setGoogleViewerState({ identifier: googleBooksIdentifier, status: 'error' })
       })
 
     return () => {
