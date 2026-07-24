@@ -138,6 +138,33 @@ export default function App() {
   const coverFileInputRef = useRef<HTMLInputElement>(null)
   const ebookFileInputRef = useRef<HTMLInputElement>(null)
 
+  const isStudent = currentUser?.role === 'Student'
+  const studentCount = useMemo(() => users.filter((u) => u.role === 'Student').length, [users])
+
+  const buildHistoryUrl = (nextView: View, nextStoreTab: 'home' | 'catalog', nextEbook: Book | null, nextLoginModal: boolean) => {
+    const params = new URLSearchParams()
+    params.set('view', nextView)
+
+    if (nextView === 'storefront') {
+      params.set('tab', nextStoreTab)
+    }
+
+    if (nextEbook) {
+      params.set('book', String(nextEbook.book_id))
+    }
+
+    if (nextLoginModal) {
+      params.set('modal', 'login')
+    }
+
+    return `${window.location.pathname}?${params.toString()}`
+  }
+
+  const navigateToView = (nextView: View) => {
+    const resolvedView = isStudent && restrictedStudentViews.includes(nextView) ? 'overview' : nextView
+    setView(resolvedView)
+  }
+
   // Load all books & transactions from Supabase
   const loadDatabaseData = async () => {
     try {
@@ -158,12 +185,74 @@ export default function App() {
     loadDatabaseData()
   }, [])
 
-  const isStudent = currentUser?.role === 'Student'
-  const studentCount = useMemo(() => users.filter((u) => u.role === 'Student').length, [users])
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const viewParam = params.get('view') as View | null
+    const validViews: View[] = ['overview', 'catalog', 'ai', 'analytics', 'reports', 'qr', 'users', 'storefront']
+    const initialView = viewParam && validViews.includes(viewParam) ? viewParam : 'storefront'
+    const initialStoreTab = params.get('tab') === 'catalog' ? 'catalog' : 'home'
+    const initialBookId = params.get('book')
 
-  const navigateToView = (nextView: View) => {
-    setView(isStudent && restrictedStudentViews.includes(nextView) ? 'overview' : nextView)
-  }
+    if (viewParam && validViews.includes(viewParam)) {
+      setView(isStudent && restrictedStudentViews.includes(initialView) ? 'overview' : initialView)
+    }
+
+    if (params.get('tab') === 'catalog' || params.get('tab') === 'home') {
+      setStoreTab(initialStoreTab)
+    }
+
+    if (initialBookId) {
+      const matchingBook = books.find((book) => String(book.book_id) === initialBookId)
+      if (matchingBook) {
+        setEbookToRead(matchingBook)
+      }
+    }
+
+    if (!params.toString()) {
+      window.history.replaceState(
+        { view: 'storefront', storeTab: 'home', ebook: null, loginModal: false },
+        '',
+        buildHistoryUrl('storefront', 'home', null, false)
+      )
+    }
+  }, [books, isStudent])
+
+  useEffect(() => {
+    const state = {
+      view,
+      storeTab,
+      ebook: ebookToRead ? { book_id: ebookToRead.book_id, title: ebookToRead.title } : null,
+      loginModal: showLoginModal
+    }
+
+    window.history.pushState(state, '', buildHistoryUrl(view, storeTab, ebookToRead, showLoginModal))
+  }, [view, storeTab, ebookToRead, showLoginModal])
+
+  useEffect(() => {
+    const handlePopState = () => {
+      const params = new URLSearchParams(window.location.search)
+      const viewParam = params.get('view') as View | null
+      const validViews: View[] = ['overview', 'catalog', 'ai', 'analytics', 'reports', 'qr', 'users', 'storefront']
+      const nextView = viewParam && validViews.includes(viewParam) ? viewParam : 'storefront'
+      const nextStoreTab = params.get('tab') === 'catalog' ? 'catalog' : 'home'
+      const nextBookId = params.get('book')
+      const nextLoginModal = params.get('modal') === 'login'
+
+      setView(isStudent && restrictedStudentViews.includes(nextView) ? 'overview' : nextView)
+      setStoreTab(nextStoreTab)
+      setShowLoginModal(nextLoginModal)
+
+      if (nextBookId) {
+        const matchingBook = books.find((book) => String(book.book_id) === nextBookId)
+        setEbookToRead(matchingBook ?? null)
+      } else {
+        setEbookToRead(null)
+      }
+    }
+
+    window.addEventListener('popstate', handlePopState)
+    return () => window.removeEventListener('popstate', handlePopState)
+  }, [books, isStudent])
 
   // Handle Log Out
   const handleLogout = () => {
@@ -1190,8 +1279,26 @@ export default function App() {
                       </div>
                     ) : (
                       filteredBooks.map((book, index) => (
-                        <div key={book.book_id} className="book-store-card">
-                          {/* CSS gradient or image book cover */}
+                        <button
+                          key={book.book_id}
+                          type="button"
+                          className="book-store-card"
+                          onClick={() => {
+                            if (book.status === 'E-book') {
+                              handleBorrowOnline(book)
+                            } else {
+                              setEbookToRead({
+                                ...book,
+                                status: 'E-book',
+                                ebook_url: book.ebook_url || null,
+                                content: book.content || null,
+                                cover_image_url: book.cover_image_url || null,
+                                total_copies: book.total_copies ?? 1,
+                                available_copies: book.available_copies ?? 1
+                              })
+                            }
+                          }}
+                        >
                           <div 
                             className={`book-cover-stage ${getCoverClass(index)}`}
                             style={book.cover_image_url ? { backgroundImage: `url(${book.cover_image_url})`, backgroundSize: 'cover', backgroundPosition: 'center' } : {}}
@@ -1202,9 +1309,12 @@ export default function App() {
                                 <span className="cover-author">{book.author}</span>
                               </>
                             )}
+                            <div className="book-preview-pill">
+                              <span>Preview</span>
+                              <strong>Hover to inspect</strong>
+                            </div>
                           </div>
 
-                          {/* Info layout */}
                           <div className="book-store-info">
                             <span className="book-category-tag">{book.category}</span>
                             <h4>{book.title}</h4>
@@ -1236,23 +1346,15 @@ export default function App() {
                             )}
 
                             <div className="book-action-grid">
-                              <button
-                                className="btn-primary"
-                                onClick={() => handleBorrowOnline(book)}
-                                disabled={book.status !== 'E-book'}
-                              >
-                                Borrow Online
-                              </button>
-                              <button
-                                className="btn-secondary"
-                                onClick={() => handleRequestBorrow(book)}
-                                disabled={book.status !== 'Available' || (book.available_copies !== undefined && book.available_copies <= 0)}
-                              >
-                                {book.available_copies === 0 ? 'All Copies Out' : 'Borrow Physical'}
-                              </button>
+                              <span className="book-preview-action">
+                                {book.status === 'E-book' ? 'Open Preview' : 'View Details'}
+                              </span>
+                              <span className="book-preview-action secondary">
+                                {book.status === 'E-book' ? 'Tap to read' : 'Tap for info'}
+                              </span>
                             </div>
                           </div>
-                        </div>
+                        </button>
                       ))
                     )}
                   </div>

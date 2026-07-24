@@ -25,10 +25,34 @@
   --shadow-lg: 0 24px 60px rgba(16, 24, 32, 0.14);
 
   --ease: cubic-bezier(0.2, 0.7, 0.3, 1);
+  --transition-fast: 180ms var(--ease);
+  --transition-smooth: 260ms var(--ease);
 }
 
 * {
   box-sizing: border-box;
+}
+
+@keyframes fluidFadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 body {
@@ -87,11 +111,12 @@ button {
   font-weight: 700;
   letter-spacing: 0.01em;
   transition:
-    background 0.18s var(--ease),
-    border-color 0.18s var(--ease),
-    color 0.18s var(--ease),
-    box-shadow 0.18s var(--ease),
-    transform 0.15s var(--ease);
+    background var(--transition-fast),
+    border-color var(--transition-fast),
+    color var(--transition-fast),
+    box-shadow var(--transition-fast),
+    transform var(--transition-fast),
+    filter var(--transition-fast);
 }
 
 .btn-primary {
@@ -103,8 +128,9 @@ button {
 
 .btn-primary:hover {
   background: linear-gradient(180deg, #116970 0%, var(--color-primary-dark) 100%);
-  box-shadow: 0 4px 12px rgba(9, 67, 73, 0.28);
-  transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(9, 67, 73, 0.24);
+  transform: translateY(-2px) scale(1.01);
+  filter: saturate(1.05);
 }
 
 .btn-primary:active {
@@ -130,7 +156,7 @@ button {
 .btn-secondary:hover {
   border-color: #c3ccc2;
   background: #f4f6f3;
-  transform: translateY(-1px);
+  transform: translateY(-2px);
   box-shadow: var(--shadow-soft);
 }
 
@@ -206,7 +232,7 @@ textarea {
   border-radius: var(--radius-sm);
   color: var(--color-text);
   background: #ffffff;
-  transition: border-color 0.15s var(--ease), box-shadow 0.15s var(--ease);
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast);
 }
 
 input,
@@ -693,18 +719,62 @@ h4 {
   border-radius: var(--radius-md);
   background: var(--color-surface);
   box-shadow: var(--shadow-soft);
-  transition: box-shadow 0.2s var(--ease), transform 0.2s var(--ease);
+  transform-origin: center;
+  animation: fluidFadeUp 650ms var(--ease) both;
+  transition: box-shadow var(--transition-smooth), transform var(--transition-smooth), border-color var(--transition-fast), background-color var(--transition-fast);
 }
 
 .book-store-card {
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  position: relative;
+  isolation: isolate;
+  padding: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-soft);
+  text-align: left;
+  cursor: pointer;
+  transform-origin: center;
+  animation: fluidFadeUp 650ms var(--ease) both;
+  transition: box-shadow var(--transition-smooth), transform var(--transition-smooth), border-color var(--transition-fast), background-color var(--transition-fast);
 }
 
-.book-store-card:hover {
+.book-store-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, rgba(13, 95, 102, 0.06), transparent 40%);
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.book-store-card:hover,
+.ai-rec-card:hover,
+.panel-card:hover,
+.metric-card:hover,
+.report-item-card:hover,
+.qr-panel:hover,
+.student-logs-card:hover,
+.login-card:hover {
   box-shadow: var(--shadow-md);
-  transform: translateY(-3px);
+  transform: translateY(-6px) scale(1.05);
+}
+
+.book-store-card:hover::before {
+  opacity: 1;
+}
+
+.book-store-card:hover .book-cover-stage {
+  transform: scale(1.04);
+}
+
+.book-store-card:hover .book-store-info {
+  transform: translateY(-2px);
 }
 
 .book-cover-stage {
@@ -717,6 +787,8 @@ h4 {
   color: #ffffff;
   background: linear-gradient(160deg, #1c2e38 0%, #0d5f66 130%);
   position: relative;
+  transform-origin: center;
+  transition: transform var(--transition-smooth), filter var(--transition-fast);
 }
 
 .book-cover-stage::after {
@@ -771,6 +843,9 @@ h4 {
   display: flex;
   flex-direction: column;
   gap: 9px;
+  position: relative;
+  z-index: 1;
+  transition: transform var(--transition-smooth);
 }
 
 .book-category-tag {
@@ -781,6 +856,37 @@ h4 {
   background: var(--color-primary-soft);
   font-size: 0.72rem;
   font-weight: 850;
+  transition: transform var(--transition-fast);
+}
+
+.book-preview-pill {
+  position: relative;
+  z-index: 1;
+  width: fit-content;
+  margin-top: auto;
+  padding: 7px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: var(--radius-pill);
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.16);
+  backdrop-filter: blur(8px);
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.16);
+}
+
+.book-preview-pill span {
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.85;
+}
+
+.book-preview-pill strong {
+  font-size: 0.78rem;
+  font-weight: 800;
 }
 
 .book-store-info h4 {
@@ -808,6 +914,32 @@ h4 {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
+}
+
+.book-preview-action {
+  min-height: 34px;
+  padding: 0 10px;
+  border-radius: var(--radius-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-primary);
+  background: rgba(255, 255, 255, 0.95);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.book-preview-action.secondary {
+  color: var(--color-text-muted);
+  background: rgba(244, 246, 245, 0.95);
+}
+
+.book-store-card:hover .book-action-grid {
+  gap: 10px;
+}
+
+.book-store-card:hover .book-category-tag {
+  transform: translateY(-1px);
 }
 
 .book-action-grid .btn-primary,
@@ -1017,12 +1149,13 @@ h4 {
   font-weight: 700;
   font-size: 0.92rem;
   position: relative;
-  transition: color 0.15s var(--ease), background 0.15s var(--ease);
+  transition: color var(--transition-fast), background var(--transition-fast), transform var(--transition-fast), box-shadow var(--transition-fast);
 }
 
 .sidebar nav button:hover {
   color: var(--color-text);
   background: #f3f5f2;
+  transform: translateX(2px);
 }
 
 .sidebar nav button.active {
