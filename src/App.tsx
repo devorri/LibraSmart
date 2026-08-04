@@ -1052,19 +1052,32 @@ export default function App() {
             {storeTab === 'home' ? (
               <>
                 <section className="store-hero" id="home">
-                  <p className="eyebrow">Matalam Polytechnic College Inc. Library</p>
-                  <h1>LibraSmart Library Management System</h1>
-                  <p>
-                    Web-based library management with AI-based book recommendation,
-                    e-book access, analytics, SMS notification, automated reports,
-                    and QR-code entry and exit tracking for Matalam Polytechnic College Inc.
-                  </p>
+                  <div className="store-hero-grid">
+                    <div className="store-hero-text">
+                      <p className="eyebrow">Matalam Polytechnic College Inc. Library</p>
+                      <h1>LibraSmart Library Management System</h1>
+                      <p>
+                        Web-based library management with AI-based book recommendation,
+                        e-book access, analytics, SMS notification, automated reports,
+                        and QR-code entry and exit tracking for Matalam Polytechnic College Inc.
+                      </p>
 
-                  <div className="store-hero-actions">
-                    <button className="btn-primary" onClick={() => setStoreTab('catalog')}>Browse catalog</button>
-                    <button className="btn-secondary" onClick={() => setShowLoginModal(true)}>
-                      Login
-                    </button>
+                      <div className="store-hero-actions">
+                        <button className="btn-primary" onClick={() => setStoreTab('catalog')}>Browse catalog</button>
+                        <button className="btn-secondary" onClick={() => setShowLoginModal(true)}>
+                          Login
+                        </button>
+                      </div>
+                    </div>
+                    
+                    <div className="public-hero-preview" aria-label="LibraSmart preview">
+                      <img src="/librasmart-logo-1024.png" alt="LibraSmart logo" />
+                      <div>
+                        <span>Today</span>
+                        <strong>{activeTransactions.length} active transactions</strong>
+                        <small>Catalog, SMS, QR gate, and analytics synced</small>
+                      </div>
+                    </div>
                   </div>
 
                   <div className="public-stats" aria-label="LibraSmart highlights">
@@ -1083,15 +1096,6 @@ export default function App() {
                     <div>
                       <strong>{activeTransactions.length}</strong>
                       <span>Active borrowing and return records</span>
-                    </div>
-                  </div>
-                  
-                  <div className="public-hero-preview" aria-label="LibraSmart preview">
-                    <img src="/librasmart-logo-1024.png" alt="LibraSmart logo" />
-                    <div>
-                      <span>Today</span>
-                      <strong>{activeTransactions.length} active transactions</strong>
-                      <small>Catalog, SMS, QR gate, and analytics synced</small>
                     </div>
                   </div>
                 </section>
@@ -2254,7 +2258,7 @@ export default function App() {
               </div>
             </div>
 
-            <p style={{ fontSize: '0.9rem', color: 'var(--color-text-muted)', marginBottom: '24px' }}>
+            <p style={{ fontSize: '0.9rem', color: '#cbd5e1', marginBottom: '24px' }}>
               Download official school reports for borrowed books, overdue books, user activity, and inventory documentation as Excel-compatible CSV files.
             </p>
 
