@@ -17,9 +17,21 @@ export function QRManager({ currentUser, onLogCreated }: QRManagerProps) {
   const [cameraError, setCameraError] = useState<string | null>(null)
   const [scanResult, setScanResult] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const scanIntervalRef = useRef<number | null>(null)
+
+  const currentUserRef = useRef(currentUser)
+  const scanTypeRef = useRef(scanType)
+
+  useEffect(() => {
+    currentUserRef.current = currentUser
+  }, [currentUser])
+
+  useEffect(() => {
+    scanTypeRef.current = scanType
+  }, [scanType])
 
   const stopCamera = () => {
     if (scanIntervalRef.current) {
@@ -45,7 +57,8 @@ export function QRManager({ currentUser, onLogCreated }: QRManagerProps) {
   const scanFrame = async () => {
     const video = videoRef.current
     const canvas = canvasRef.current
-    const targetUserId = currentUser?.user_id
+    const targetUserId = currentUserRef.current?.user_id
+    const currentScanType = scanTypeRef.current
 
     if (!video || !canvas || !targetUserId) return
 
@@ -64,30 +77,26 @@ export function QRManager({ currentUser, onLogCreated }: QRManagerProps) {
     const code = jsQR(imageData.data, width, height)
 
     if (code?.data) {
-      if (code.data.includes('MPCI-LIBRARY-GATE')) {
-        stopCamera()
-        setCameraError(null)
-        setScanResult(`QR matched! Logging ${scanType}.`)
-        setLoading(true)
+      stopCamera()
+      setCameraError(null)
+      setScanResult(`QR matched! Logging ${currentScanType}...`)
+      setLoading(true)
 
-        try {
-          const newLog = await addLibraryLog(targetUserId, scanType)
-          if (newLog) {
-            playBeep()
-            setScanResult(`Successfully logged ${scanType}!`)
-            onLogCreated()
-            loadData()
-          } else {
-            setScanResult('Failed to log attendance. Try again.')
-          }
-        } catch (err) {
-          setScanResult('Error saving gate record.')
-          console.error(err)
-        } finally {
-          setLoading(false)
+      try {
+        const newLog = await addLibraryLog(targetUserId, currentScanType)
+        if (newLog) {
+          playBeep()
+          setScanResult(`Successfully logged ${currentScanType}!`)
+          onLogCreated()
+          loadData()
+        } else {
+          setScanResult('Failed to log attendance. Try again.')
         }
-      } else {
-        setScanResult('Detected QR is not the library gate code.')
+      } catch (err) {
+        setScanResult('Error saving gate record.')
+        console.error(err)
+      } finally {
+        setLoading(false)
       }
     }
   }
@@ -108,7 +117,7 @@ export function QRManager({ currentUser, onLogCreated }: QRManagerProps) {
         videoRef.current.srcObject = mediaStream
         await videoRef.current.play()
       }
-        setCameraActive(true)
+      setCameraActive(true)
       setScanResult('Point your device at the library gate QR code.')
       scanIntervalRef.current = window.setInterval(scanFrame, 700)
     } catch (err) {
@@ -132,7 +141,6 @@ export function QRManager({ currentUser, onLogCreated }: QRManagerProps) {
   useEffect(() => {
     loadData()
   }, [currentUser])
-
   // Play Scanner Beep Sound using browser AudioContext (no external files needed!)
   const playBeep = () => {
     try {

@@ -1,27 +1,33 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { Login } from './components/Login'
-import { SMSPhoneSimulator } from './components/SMSPhoneSimulator'
 import { EbookReader } from './components/EbookReader'
 import { QRManager } from './components/QRManager'
-import type { User, Book, Transaction } from './lib/supabase'
+import type { User, Book, Transaction, TrashRecord } from './lib/supabase'
 import './App.css'
 import {
   fetchBooks,
   addBook,
   updateBook,
-  deleteBook,
   fetchTransactions,
   createTransaction,
   approveTransaction,
   returnBookTransaction,
+  cancelTransaction,
+  softDeleteBook,
+  softDeleteUser,
+  fetchTrash,
+  restoreFromTrash,
+  permanentlyDeleteFromTrash,
   queueNotification,
+  sendSMSViaSemaphore,
   fetchAllUsers,
   registerUser,
   isUsingMock,
   uploadBookCover,
   uploadProfilePhoto,
   updateUser,
-  uploadEbookFile
+  uploadEbookFile,
+  hashPassword
 } from './lib/supabase'
 
 import {
@@ -48,10 +54,14 @@ import {
   Upload,
   ImagePlus,
   AlertTriangle,
-  History
+  History,
+  RotateCcw,
+  ShieldCheck,
+  KeyRound,
+  RefreshCw
 } from 'lucide-react'
 
-type View = 'overview' | 'catalog' | 'ai' | 'analytics' | 'reports' | 'qr' | 'users' | 'storefront'
+type View = 'overview' | 'catalog' | 'ai' | 'analytics' | 'reports' | 'qr' | 'users' | 'storefront' | 'trash'
 
 type ExternalBookResult = {
   key: string
@@ -87,11 +97,13 @@ export default function App() {
   const [books, setBooks] = useState<Book[]>([])
   const [transactions, setTransactions] = useState<Transaction[]>([])
   const [users, setUsers] = useState<User[]>([])
+  const [trashRecords, setTrashRecords] = useState<TrashRecord[]>([])
+
   const [newStudentName, setNewStudentName] = useState('')
   const [newStudentUsername, setNewStudentUsername] = useState('')
   const [newStudentPassword, setNewStudentPassword] = useState('')
   const [newStudentPhone, setNewStudentPhone] = useState('+639')
-  const [newStudentProgramStrand, setNewStudentProgramStrand] = useState('BSIT')
+  const [newStudentProgramStrand, setNewStudentProgramStrand] = useState('ICT')
   const [newStudentAcademicLevel, setNewStudentAcademicLevel] = useState('1st Year')
   const [newStudentError, setNewStudentError] = useState('')
   const [newStudentSuccess, setNewStudentSuccess] = useState('')
@@ -102,11 +114,21 @@ export default function App() {
   const [manualBorrowError, setManualBorrowError] = useState('')
   const [manualBorrowSuccess, setManualBorrowSuccess] = useState('')
   const [manualBorrowLoading, setManualBorrowLoading] = useState(false)
+
+  // Change Password Modal State
+  const [isChangePasswordOpen, setIsChangePasswordOpen] = useState(false)
+  const [currentPasswordInput, setCurrentPasswordInput] = useState('')
+  const [newPasswordInput, setNewPasswordInput] = useState('')
+  const [confirmPasswordInput, setConfirmPasswordInput] = useState('')
+  const [changePasswordOtp, setChangePasswordOtp] = useState('')
+  const [changePasswordOtpStep, setChangePasswordOtpStep] = useState(false)
+  const [generatedChangePasswordOtp, setGeneratedChangePasswordOtp] = useState('')
+  const [changePasswordMsg, setChangePasswordMsg] = useState<{ type: 'error' | 'success'; text: string } | null>(null)
+  const [changePasswordLoading, setChangePasswordLoading] = useState(false)
   
   // Interaction/Simulations States
   const [query, setQuery] = useState('')
   const [selectedCategory, setSelectedCategory] = useState('All')
-  const [refreshSignal, setRefreshSignal] = useState(0)
   const [ebookToRead, setEbookToRead] = useState<Book | null>(null)
   const [externalBookResults, setExternalBookResults] = useState<ExternalBookResult[]>([])
   const [externalSearchQuery, setExternalSearchQuery] = useState('')
@@ -119,7 +141,7 @@ export default function App() {
   const [newBookAuthor, setNewBookAuthor] = useState('')
   const [newBookIsbn, setNewBookIsbn] = useState('')
   const [newBookCategory, setNewBookCategory] = useState('Information Technology')
-  const [newBookRelevance, setNewBookRelevance] = useState('BSIT')
+  const [newBookRelevance, setNewBookRelevance] = useState('ICT')
   const [newBookStatus, setNewBookStatus] = useState<'Available' | 'E-book'>('Available')
   const [newBookContent, setNewBookContent] = useState('')
   const [newBookCoverUrl, setNewBookCoverUrl] = useState('')   // existing URL (for edit mode)
@@ -165,6 +187,15 @@ export default function App() {
     setView(resolvedView)
   }
 
+  const loadTrashData = async () => {
+    try {
+      const trash = await fetchTrash()
+      setTrashRecords(trash)
+    } catch (err) {
+      console.error('Error loading trash records:', err)
+    }
+  }
+
   // Load all books & transactions from Supabase
   const loadDatabaseData = async () => {
     try {
@@ -174,6 +205,7 @@ export default function App() {
       setTransactions(txsData)
       const usersData = await fetchAllUsers()
       setUsers(usersData)
+      loadTrashData()
     } catch (err) {
       console.error('Error loading library database:', err)
     }
@@ -188,7 +220,7 @@ export default function App() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     const viewParam = params.get('view') as View | null
-    const validViews: View[] = ['overview', 'catalog', 'ai', 'analytics', 'reports', 'qr', 'users', 'storefront']
+    const validViews: View[] = ['overview', 'catalog', 'ai', 'analytics', 'reports', 'qr', 'users', 'storefront', 'trash']
     const initialView = viewParam && validViews.includes(viewParam) ? viewParam : 'storefront'
     const initialStoreTab = params.get('tab') === 'catalog' ? 'catalog' : 'home'
     const initialBookId = params.get('book')
@@ -361,8 +393,8 @@ export default function App() {
   // SMS REMINDER SENDER HELPER
   // -------------------------------------------------------------
   const sendSMS = async (userId: number, phone: string, message: string, type: 'Due' | 'Overdue' | 'Transaction') => {
+    await sendSMSViaSemaphore(phone, message)
     await queueNotification(userId, phone, message, type)
-    setRefreshSignal((prev) => prev + 1) // Wake up SMS simulator instantly
   }
 
   // -------------------------------------------------------------
@@ -498,14 +530,132 @@ export default function App() {
   }
 
   const handleDeleteBook = async (book_id: number) => {
-    if (window.confirm('Are you sure you want to delete this book?')) {
-      const deleted = await deleteBook(book_id)
+    const book = books.find(b => b.book_id === book_id)
+    if (!book) return
+    if (window.confirm(`Are you sure you want to move "${book.title}" to Trash? You can restore it later.`)) {
+      const deleted = await softDeleteBook(book, currentUser?.name)
       if (deleted) {
         loadDatabaseData()
       } else {
-        alert('Could not delete book.')
+        alert('Could not move book to trash.')
       }
     }
+  }
+
+  const handleDeleteUser = async (user: User) => {
+    if (window.confirm(`Are you sure you want to move student "${user.name}" to Trash?`)) {
+      const deleted = await softDeleteUser(user, currentUser?.name)
+      if (deleted) {
+        loadDatabaseData()
+      } else {
+        alert('Could not move user record to trash.')
+      }
+    }
+  }
+
+  const handleRestoreTrash = async (record: TrashRecord) => {
+    const restored = await restoreFromTrash(record)
+    if (restored) {
+      loadDatabaseData()
+    } else {
+      alert('Could not restore record from trash.')
+    }
+  }
+
+  const handlePermanentDeleteTrash = async (trash_id: number) => {
+    if (window.confirm('Permanently delete this record from trash? This action cannot be undone.')) {
+      await permanentlyDeleteFromTrash(trash_id)
+      loadDatabaseData()
+    }
+  }
+
+  const handleCancelReservation = async (transaction_id: number, book_id: number) => {
+    if (window.confirm('Are you sure you want to cancel this online book reservation?')) {
+      const cancelled = await cancelTransaction(transaction_id, book_id)
+      if (cancelled) {
+        if (currentUser?.phone_number) {
+          await sendSMS(currentUser.user_id, currentUser.phone_number, 'MPCI Library: Your book reservation has been cancelled.', 'Transaction')
+        }
+        loadDatabaseData()
+      } else {
+        alert('Could not cancel reservation.')
+      }
+    }
+  }
+
+  const handleSendChangePasswordOtp = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setChangePasswordMsg(null)
+
+    if (!currentUser) return
+    if (!currentPasswordInput || !newPasswordInput || !confirmPasswordInput) {
+      setChangePasswordMsg({ type: 'error', text: 'Please fill in all fields.' })
+      return
+    }
+
+    if (newPasswordInput !== confirmPasswordInput) {
+      setChangePasswordMsg({ type: 'error', text: 'New password and confirmation do not match.' })
+      return
+    }
+
+    if (newPasswordInput.length < 4) {
+      setChangePasswordMsg({ type: 'error', text: 'Password must be at least 4 characters.' })
+      return
+    }
+
+    const hashedCurrent = await hashPassword(currentPasswordInput)
+    if (currentUser.password && currentUser.password !== hashedCurrent && currentUser.password !== currentPasswordInput) {
+      setChangePasswordMsg({ type: 'error', text: 'Current password is incorrect.' })
+      return
+    }
+
+    setChangePasswordLoading(true)
+
+    const otp = Math.floor(100000 + Math.random() * 900000).toString()
+    setGeneratedChangePasswordOtp(otp)
+
+    const userPhone = currentUser.phone_number || '+639123456789'
+    const msg = `LibraSmart OTP: Verification code to change password is ${otp}.`
+
+    await sendSMSViaSemaphore(userPhone, msg)
+    await queueNotification(currentUser.user_id, userPhone, msg, 'Transaction')
+
+    setChangePasswordOtpStep(true)
+    setChangePasswordMsg({ type: 'success', text: `OTP verification code sent to ${userPhone} via SMS.` })
+    setChangePasswordLoading(false)
+  }
+
+  const handleVerifyChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setChangePasswordMsg(null)
+
+    if (!currentUser) return
+    if (changePasswordOtp.trim() !== generatedChangePasswordOtp) {
+      setChangePasswordMsg({ type: 'error', text: 'Invalid OTP code. Please check your SMS notification.' })
+      return
+    }
+
+    setChangePasswordLoading(true)
+
+    const hashedNew = await hashPassword(newPasswordInput)
+    const success = await updateUser(currentUser.user_id, { password: hashedNew })
+
+    if (success) {
+      setCurrentUser(prev => prev ? { ...prev, password: hashedNew } : prev)
+      setChangePasswordMsg({ type: 'success', text: 'Password updated successfully!' })
+      setTimeout(() => {
+        setIsChangePasswordOpen(false)
+        setCurrentPasswordInput('')
+        setNewPasswordInput('')
+        setConfirmPasswordInput('')
+        setChangePasswordOtp('')
+        setChangePasswordOtpStep(false)
+        setChangePasswordMsg(null)
+      }, 1500)
+    } else {
+      setChangePasswordMsg({ type: 'error', text: 'Failed to update password.' })
+    }
+    setChangePasswordLoading(false)
   }
 
   const handleApproveBorrow = async (tx: Transaction) => {
@@ -1229,12 +1379,12 @@ export default function App() {
                               </div>
                             )}
                             <div>
-                              <h4 style={{ fontSize: '0.92rem', margin: '0 0 2px 0' }}>{book.title}</h4>
-                              <span className="author" style={{ fontSize: '0.78rem' }}>By {book.author}</span>
+                              <h4 style={{ fontSize: '0.92rem', margin: '0 0 2px 0', color: '#ffffff', fontWeight: 700 }}>{book.title}</h4>
+                              <span className="author" style={{ fontSize: '0.78rem', color: '#cbd5e1' }}>By {book.author}</span>
                             </div>
                           </div>
                           <div style={{ padding: '0 16px 16px 16px', display: 'flex', flexDirection: 'column', flexGrow: 1 }}>
-                            <p style={{ fontSize: '0.78rem', margin: '8px 0', color: 'var(--color-text-muted)' }}>{reason}</p>
+                            <p style={{ fontSize: '0.78rem', margin: '8px 0', color: '#e2e8f0', lineHeight: 1.4 }}>{reason}</p>
                             <div className="book-action-grid" style={{ marginTop: 'auto', paddingTop: '8px' }}>
                               <button
                                 className="btn-primary"
@@ -1351,10 +1501,10 @@ export default function App() {
 
                             <div className="book-action-grid">
                               <span className="book-preview-action">
-                                {book.status === 'E-book' ? 'Open Preview' : 'View Details'}
+                                {book.status === 'E-book' ? 'Read Online' : 'Reserve Online'}
                               </span>
                               <span className="book-preview-action secondary">
-                                {book.status === 'E-book' ? 'Tap to read' : 'Tap for info'}
+                                {book.status === 'E-book' ? 'Tap to read' : 'Reserve for pick-up'}
                               </span>
                             </div>
                           </div>
@@ -1458,9 +1608,6 @@ export default function App() {
         {ebookToRead && (
           <EbookReader book={ebookToRead} onClose={() => setEbookToRead(null)} />
         )}
-
-        {/* PERSISTENT MOBILE SMS DISPLAY GATEWAY SIMULATOR */}
-        <SMSPhoneSimulator currentUser={currentUser} triggerRefreshSignal={refreshSignal} />
       </div>
     )
   }
@@ -1508,9 +1655,14 @@ export default function App() {
                 <FileText size={18} /> Reports
               </button>
               {(currentUser.role === 'Librarian' || currentUser.role === 'Administrator') && (
-                <button className={view === 'users' ? 'active' : ''} onClick={() => navigateToView('users')}>
-                  <UserCheck size={18} /> Student Records
-                </button>
+                <>
+                  <button className={view === 'users' ? 'active' : ''} onClick={() => navigateToView('users')}>
+                    <UserCheck size={18} /> Student Records
+                  </button>
+                  <button className={view === 'trash' ? 'active' : ''} onClick={() => navigateToView('trash')}>
+                    <Trash2 size={18} /> Trash / Recycler
+                  </button>
+                </>
               )}
             </>
           )}
@@ -1551,6 +1703,17 @@ export default function App() {
               </span>
             </div>
           </div>
+          <button
+            className="btn-secondary"
+            style={{ width: '100%', marginBottom: '6px', fontSize: '0.75rem', padding: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
+            onClick={() => {
+              setIsChangePasswordOpen(true)
+              setChangePasswordMsg(null)
+              setChangePasswordOtpStep(false)
+            }}
+          >
+            <KeyRound size={14} /> Change Password
+          </button>
           <button className="btn-logout" onClick={handleLogout}>
             <LogOut size={14} /> Sign Out
           </button>
@@ -1771,6 +1934,147 @@ export default function App() {
                 </div>
               </div>
             </div>
+
+            {/* MY ONLINE BOOK RESERVATIONS & APPROVAL LIST */}
+            <div className="panel-card" style={{ marginTop: '24px' }}>
+              <div className="panel-card-header">
+                <div className="panel-title">
+                  <Clock size={20} />
+                  <h3>Online Book Reservations & Approval List</h3>
+                </div>
+              </div>
+              <p style={{ margin: '0 0 16px 0', fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>
+                View your reserved books online. You can cancel your reservation anytime before pick-up if needed.
+              </p>
+
+              <div className="table-container">
+                <table className="premium-table">
+                  <thead>
+                    <tr>
+                      <th>Book Title</th>
+                      <th>Author</th>
+                      <th>Borrower / User</th>
+                      <th>Borrow Date</th>
+                      <th>Due Date</th>
+                      <th>Status</th>
+                      <th>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {transactions.filter(tx => 
+                      tx.status === 'Requested' && 
+                      (currentUser.role === 'Librarian' || currentUser.role === 'Administrator' || tx.user_id === currentUser.user_id)
+                    ).length === 0 ? (
+                      <tr>
+                        <td colSpan={7} className="empty-msg">No active online book reservations found.</td>
+                      </tr>
+                    ) : (
+                      transactions.filter(tx => 
+                        tx.status === 'Requested' && 
+                        (currentUser.role === 'Librarian' || currentUser.role === 'Administrator' || tx.user_id === currentUser.user_id)
+                      ).map(tx => (
+                        <tr key={tx.transaction_id}>
+                          <td style={{ fontWeight: '700' }}>{tx.books?.title || `Book #${tx.book_id}`}</td>
+                          <td>{tx.books?.author || 'N/A'}</td>
+                          <td>{tx.users?.name || `User #${tx.user_id}`}</td>
+                          <td>{tx.borrow_date}</td>
+                          <td>{tx.due_date}</td>
+                          <td>
+                            <span className="badge badge-warning">
+                              {tx.status}
+                            </span>
+                          </td>
+                          <td>
+                            <div style={{ display: 'flex', gap: '8px' }}>
+                              {(currentUser.role === 'Librarian' || currentUser.role === 'Administrator') && (
+                                <button
+                                  className="btn-primary"
+                                  style={{ padding: '4px 10px', fontSize: '0.78rem' }}
+                                  onClick={() => handleApproveBorrow(tx)}
+                                >
+                                  Approve
+                                </button>
+                              )}
+                              <button
+                                className="btn-secondary"
+                                style={{ padding: '4px 10px', fontSize: '0.78rem', color: '#dc2626' }}
+                                onClick={() => handleCancelReservation(tx.transaction_id, tx.book_id)}
+                              >
+                                Cancel Reservation
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* DEDICATED DIGITAL E-BOOKS TABLE ON DASHBOARD */}
+            <div className="panel-card" style={{ marginTop: '24px' }}>
+              <div className="panel-card-header">
+                <div className="panel-title">
+                  <BookOpen size={20} />
+                  <h3>Digital E-Books Collection (Read Online)</h3>
+                </div>
+                <span className="badge badge-info">{books.filter(b => b.status === 'E-book').length} E-Books Available</span>
+              </div>
+              <p style={{ margin: '0 0 16px 0', fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>
+                Dedicated digital table for instant online reading of digitised library materials.
+              </p>
+
+              <div className="table-container">
+                <table className="premium-table">
+                  <thead>
+                    <tr>
+                      <th>E-Book Title</th>
+                      <th>Author</th>
+                      <th>Category</th>
+                      <th>Strand Relevance</th>
+                      <th>Access Format</th>
+                      <th>Reader Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {books.filter(b => b.status === 'E-book').length === 0 ? (
+                      <tr>
+                        <td colSpan={6} className="empty-msg">No digital E-books currently in collection.</td>
+                      </tr>
+                    ) : (
+                      books.filter(b => b.status === 'E-book').map(book => (
+                        <tr key={book.book_id}>
+                          <td style={{ fontWeight: '700' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                              {book.cover_image_url ? (
+                                <img src={book.cover_image_url} alt={book.title} style={{ width: '32px', height: '42px', objectFit: 'cover', borderRadius: '4px' }} />
+                              ) : (
+                                <div style={{ width: '32px', height: '42px', borderRadius: '4px', background: 'var(--color-primary)', color: '#fff', fontSize: '9px', fontWeight: 'bold', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>PDF</div>
+                              )}
+                              <span>{book.title}</span>
+                            </div>
+                          </td>
+                          <td>{book.author}</td>
+                          <td><span className="badge badge-info">{book.category}</span></td>
+                          <td><span className="badge badge-secondary">{book.program_strand_relevance || 'General'}</span></td>
+                          <td><span className="badge badge-success">Read Online PDF</span></td>
+                          <td>
+                            <button
+                              className="btn-primary"
+                              style={{ padding: '6px 14px', fontSize: '0.8rem' }}
+                              onClick={() => handleBorrowOnline(book)}
+                            >
+                              <BookOpen size={14} /> Read Online
+                            </button>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           </>
         )}
 
@@ -1872,7 +2176,7 @@ export default function App() {
                                   onClick={() => handleBorrowOnline(book)}
                                   disabled={book.status !== 'E-book'}
                                 >
-                                  Borrow Online
+                                  Read Online
                                 </button>
                                 <button
                                   className="btn-secondary"
@@ -1880,7 +2184,7 @@ export default function App() {
                                   onClick={() => handleRequestBorrow(book)}
                                   disabled={book.status !== 'Available' || (book.available_copies !== undefined && book.available_copies <= 0)}
                                 >
-                                  {book.available_copies === 0 ? 'All Copies Out' : 'Borrow Physical'}
+                                  {book.available_copies === 0 ? 'All Copies Out' : 'Reserve Online'}
                                 </button>
                               </>
                             )}
@@ -1949,11 +2253,11 @@ export default function App() {
                         </div>
                       )}
                       <div>
-                        <h4 style={{ margin: '0 0 4px 0', fontSize: '1rem', lineHeight: '1.2' }}>{book.title}</h4>
-                        <span className="author">By {book.author}</span>
+                        <h4 style={{ margin: '0 0 4px 0', fontSize: '1rem', lineHeight: '1.2', color: '#ffffff', fontWeight: 700 }}>{book.title}</h4>
+                        <span className="author" style={{ color: '#cbd5e1' }}>By {book.author}</span>
                       </div>
                     </div>
-                    <div className="explanation" style={{ padding: '0 16px 16px 16px', marginTop: '12px', fontSize: '0.85rem', color: 'var(--color-text-muted)', borderBottom: '1px solid var(--color-border)', flexGrow: 1 }}>
+                    <div className="explanation" style={{ padding: '0 16px 16px 16px', marginTop: '12px', fontSize: '0.85rem', color: '#e2e8f0', borderBottom: '1px solid rgba(255, 255, 255, 0.1)', flexGrow: 1 }}>
                       {reason}
                     </div>
                     
@@ -1963,14 +2267,14 @@ export default function App() {
                         onClick={() => handleBorrowOnline(book)}
                         disabled={book.status !== 'E-book'}
                       >
-                        Borrow Online
+                        Read Online
                       </button>
                       <button
                         className="btn-secondary"
                         onClick={() => handleRequestBorrow(book)}
                         disabled={book.status !== 'Available'}
                       >
-                        Borrow Physical
+                        Reserve Online
                       </button>
                     </div>
                   </div>
@@ -2385,13 +2689,15 @@ export default function App() {
                         value={newStudentProgramStrand}
                         onChange={(e) => setNewStudentProgramStrand(e.target.value)}
                       >
-                        <option value="BSIT">BSIT</option>
-                        <option value="BSA">BSA</option>
-                        <option value="BSBA">BSBA</option>
-                        <option value="BSED">BSED</option>
-                        <option value="General">General</option>
-                        <option value="Grade 11 - STEM">Grade 11 - STEM</option>
-                        <option value="Grade 12 - ICT">Grade 12 - ICT</option>
+                        <option value="ICT">ICT (Information & Communications Technology)</option>
+                        <option value="SMAW">SMAW (Shielded Metal Arc Welding)</option>
+                        <option value="Automotive">Automotive Servicing</option>
+                        <option value="HUMSS">HUMSS (Humanities & Social Sciences)</option>
+                        <option value="Healthcare">Healthcare Services</option>
+                        <option value="IT">IT / BS In Information Technology</option>
+                        <option value="BSA">BSA (BS In Accountancy)</option>
+                        <option value="BSBA">BSBA (BS In Business Administration)</option>
+                        <option value="BSED">BSED (Bachelor of Secondary Education)</option>
                       </select>
                     </div>
 
@@ -2402,10 +2708,10 @@ export default function App() {
                         value={newStudentAcademicLevel}
                         onChange={(e) => setNewStudentAcademicLevel(e.target.value)}
                       >
-                        <option value="1st Year">1st Year College</option>
-                        <option value="2nd Year">2nd Year College</option>
-                        <option value="3rd Year">3rd Year College</option>
-                        <option value="4th Year">4th Year College</option>
+                        <option value="1st Year">1st Year Course</option>
+                        <option value="2nd Year">2nd Year Course</option>
+                        <option value="3rd Year">3rd Year Course</option>
+                        <option value="4th Year">4th Year Course</option>
                         <option value="Grade 11">Grade 11 Senior High</option>
                         <option value="Grade 12">Grade 12 Senior High</option>
                       </select>
@@ -2489,17 +2795,103 @@ export default function App() {
                     <p className="empty-msg">No student records found yet.</p>
                   ) : (
                     users.filter((u) => u.role === 'Student').map((student) => (
-                      <div key={student.user_id} className="user-list-item">
+                      <div key={student.user_id} className="user-list-item" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <div>
                           <strong>{student.name}</strong>
-                          <span>{student.username} • {student.program_strand || 'General'} • {student.academic_level || 'N/A'}</span>
+                          <div style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)', display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap', marginTop: '2px' }}>
+                            <span>@{student.username}</span>
+                            <span>•</span>
+                            <span>Pass: <code style={{ background: 'rgba(255,255,255,0.08)', padding: '1px 5px', borderRadius: '3px', fontSize: '0.72rem' }}>•••••••• (SHA-256)</code></span>
+                            <span>•</span>
+                            <span>{student.program_strand || 'General'} ({student.academic_level || 'N/A'})</span>
+                          </div>
                         </div>
-                        <span>{student.phone_number || 'No phone'}</span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                          <span style={{ fontSize: '0.78rem' }}>{student.phone_number || 'No phone'}</span>
+                          <button
+                            className="btn-secondary"
+                            style={{ padding: '4px 8px', color: '#dc2626', fontSize: '0.75rem' }}
+                            onClick={() => handleDeleteUser(student)}
+                            title="Move student to Trash"
+                          >
+                            <Trash2 size={14} /> Delete
+                          </button>
+                        </div>
                       </div>
                     ))
                   )}
                 </div>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* VIEW TRASH / RECYCLER MANAGEMENT */}
+        {view === 'trash' && (currentUser.role === 'Librarian' || currentUser.role === 'Administrator') && (
+          <div className="panel-card">
+            <div className="panel-card-header">
+              <div className="panel-title">
+                <Trash2 size={20} />
+                <h3>Trash / Soft Deleted Records Recycler</h3>
+              </div>
+              <button className="btn-secondary" style={{ padding: '6px 12px', fontSize: '0.8rem' }} onClick={loadTrashData}>
+                <RefreshCw size={14} /> Refresh Trash
+              </button>
+            </div>
+            <p style={{ margin: '0 0 16px 0', fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>
+              Records deleted accidentally can be recovered here by the Administrator or Librarian.
+            </p>
+
+            <div className="table-container">
+              <table className="premium-table">
+                <thead>
+                  <tr>
+                    <th>Record Type</th>
+                    <th>Title / Student Name</th>
+                    <th>Deleted Date</th>
+                    <th>Deleted By</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {trashRecords.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="empty-msg">Trash is currently empty. No soft-deleted records found.</td>
+                    </tr>
+                  ) : (
+                    trashRecords.map(item => (
+                      <tr key={item.trash_id}>
+                        <td>
+                          <span className={`badge ${item.record_type === 'Book' ? 'badge-info' : 'badge-warning'}`}>
+                            {item.record_type}
+                          </span>
+                        </td>
+                        <td style={{ fontWeight: 700 }}>{item.title_or_name}</td>
+                        <td>{new Date(item.deleted_at).toLocaleString()}</td>
+                        <td>{item.deleted_by || 'Admin'}</td>
+                        <td>
+                          <div style={{ display: 'flex', gap: '8px' }}>
+                            <button
+                              className="btn-primary"
+                              style={{ padding: '5px 12px', fontSize: '0.8rem' }}
+                              onClick={() => handleRestoreTrash(item)}
+                            >
+                              <RotateCcw size={14} /> Restore Record
+                            </button>
+                            <button
+                              className="btn-secondary"
+                              style={{ padding: '5px 12px', fontSize: '0.8rem', color: '#dc2626' }}
+                              onClick={() => handlePermanentDeleteTrash(item.trash_id)}
+                            >
+                              <Trash2 size={14} /> Delete Permanently
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
             </div>
           </div>
         )}
@@ -2728,13 +3120,105 @@ Chapter 2: Structural implementations..."
         </div>
       )}
 
+      {/* CHANGE PASSWORD MODAL */}
+      {isChangePasswordOpen && (
+        <div className="modal-overlay">
+          <div className="modal-card" style={{ maxWidth: '440px' }}>
+            <div className="modal-header">
+              <h3><KeyRound size={18} style={{ verticalAlign: 'middle', marginRight: '6px' }} /> Change Account Password</h3>
+              <button className="btn-close-modal" onClick={() => setIsChangePasswordOpen(false)}>
+                <X size={16} />
+              </button>
+            </div>
+
+            {changePasswordMsg && (
+              <div className={`login-alert ${changePasswordMsg.type}`}>{changePasswordMsg.text}</div>
+            )}
+
+            {!changePasswordOtpStep ? (
+              <form onSubmit={handleSendChangePasswordOtp} className="modal-form">
+                <div className="form-group">
+                  <label htmlFor="old-pass">Current Password</label>
+                  <input
+                    id="old-pass"
+                    type="password"
+                    value={currentPasswordInput}
+                    onChange={(e) => setCurrentPasswordInput(e.target.value)}
+                    placeholder="Enter current password"
+                    required
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label htmlFor="new-pass">New Password</label>
+                  <input
+                    id="new-pass"
+                    type="password"
+                    value={newPasswordInput}
+                    onChange={(e) => setNewPasswordInput(e.target.value)}
+                    placeholder="Enter new password (min 4 characters)"
+                    required
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label htmlFor="confirm-pass">Confirm New Password</label>
+                  <input
+                    id="confirm-pass"
+                    type="password"
+                    value={confirmPasswordInput}
+                    onChange={(e) => setConfirmPasswordInput(e.target.value)}
+                    placeholder="Re-enter new password"
+                    required
+                  />
+                </div>
+
+                <button type="submit" className="btn-primary" disabled={changePasswordLoading} style={{ width: '100%', marginTop: '1rem' }}>
+                  {changePasswordLoading ? 'Sending OTP...' : 'Send OTP Code to Mobile'} <ShieldCheck size={18} />
+                </button>
+              </form>
+            ) : (
+              <form onSubmit={handleVerifyChangePassword} className="modal-form">
+                <div className="otp-verification-box" style={{ padding: 0 }}>
+                  <p>Enter the 6-digit OTP code sent via SMS to verify password change:</p>
+                  
+                  <div className="form-group">
+                    <label htmlFor="pass-otp-input">6-Digit Verification Code</label>
+                    <input
+                      id="pass-otp-input"
+                      type="text"
+                      maxLength={6}
+                      value={changePasswordOtp}
+                      onChange={(e) => setChangePasswordOtp(e.target.value)}
+                      placeholder="123456"
+                      className="otp-code-input"
+                      required
+                    />
+                  </div>
+
+                  <button type="submit" className="btn-primary" disabled={changePasswordLoading} style={{ width: '100%', marginTop: '1rem' }}>
+                    {changePasswordLoading ? 'Updating...' : 'Verify OTP & Change Password'} <ShieldCheck size={18} />
+                  </button>
+
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    style={{ width: '100%', marginTop: '0.5rem' }}
+                    onClick={() => setChangePasswordOtpStep(false)}
+                  >
+                    Back to Form
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* DIGITIZED E-BOOK READER OVERLAY SCREEN */}
       {ebookToRead && (
         <EbookReader book={ebookToRead} onClose={() => setEbookToRead(null)} />
       )}
-
-      {/* PERSISTENT MOBILE SMS DISPLAY GATEWAY SIMULATOR */}
-      <SMSPhoneSimulator currentUser={currentUser} triggerRefreshSignal={refreshSignal} />
     </main>
   )
 }

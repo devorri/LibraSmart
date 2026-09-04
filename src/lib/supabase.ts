@@ -43,7 +43,7 @@ export interface Transaction {
   borrow_date: string
   due_date: string
   return_date: string | null
-  status: 'Requested' | 'Borrowed' | 'Returned' | 'Overdue'
+  status: 'Requested' | 'Borrowed' | 'Returned' | 'Overdue' | 'Cancelled'
   // Joined fields
   users?: { name: string; username: string; program_strand: string | null; academic_level: string | null; phone_number: string | null }
   books?: { title: string; author: string; isbn: string; category: string }
@@ -66,6 +66,16 @@ export interface Notification {
   status: 'Queued' | 'Sent'
   date_sent: string
   users?: { name: string }
+}
+
+export interface TrashRecord {
+  trash_id: number
+  record_type: 'Book' | 'User'
+  original_id: number
+  title_or_name: string
+  data: any
+  deleted_at: string
+  deleted_by?: string
 }
 
 // Fallback Mock Data in case tables don't exist yet or connection fails
@@ -141,30 +151,51 @@ export function isUsingMock() {
 // -------------------------------------------------------------
 // USER API
 // -------------------------------------------------------------
-export async function authenticateUser(username: string, passwordHash: string): Promise<User | null> {
+export async function authenticateUser(username: string, rawPassword: string): Promise<User | null> {
+  const hashed = await hashPassword(rawPassword)
   if (useMock) {
     const list = getStoredMock<User[]>('users', mockData.users)
-    const found = list.find(u => u.username.toLowerCase() === username.toLowerCase() && u.password === passwordHash)
+    const found = list.find(u =>
+      u.username.toLowerCase() === username.toLowerCase() &&
+      (u.password === hashed || u.password === rawPassword || !u.password)
+    )
     return found || null
   }
   try {
-    const { data, error } = await supabase
+    let { data } = await supabase
       .from('users')
       .select('*')
       .eq('username', username)
-      .eq('password', passwordHash)
-      .single()
-    if (error) return null
-    return data as User
+      .eq('password', hashed)
+      .maybeSingle()
+
+    if (!data) {
+      const { data: rawMatch } = await supabase
+        .from('users')
+        .select('*')
+        .eq('username', username)
+        .eq('password', rawPassword)
+        .maybeSingle()
+      
+      if (rawMatch) {
+        data = rawMatch
+        await supabase.from('users').update({ password: hashed }).eq('user_id', data.user_id)
+      }
+    }
+
+    return data as User | null
   } catch {
     return null
   }
 }
 
 export async function registerUser(user: Omit<User, 'user_id'>): Promise<User | null> {
+  const hashedPassword = user.password ? await hashPassword(user.password) : undefined
+  const userWithHash = { ...user, password: hashedPassword }
+
   if (useMock) {
     const list = getStoredMock<User[]>('users', mockData.users)
-    const newUser = { ...user, user_id: list.length + 1 }
+    const newUser = { ...userWithHash, user_id: list.length + 1 }
     list.push(newUser)
     saveStoredMock('users', list)
     return newUser
@@ -172,7 +203,7 @@ export async function registerUser(user: Omit<User, 'user_id'>): Promise<User | 
   try {
     const { data, error } = await supabase
       .from('users')
-      .insert([user])
+      .insert([userWithHash])
       .select()
       .single()
     if (error) throw error
@@ -546,7 +577,7 @@ export async function queueNotification(user_id: number, phone_number: string, m
     const notifs = getStoredMock<Notification[]>('notifications', mockData.notifications)
     const newNotif: Notification = {
       notification_id: notifs.length + 1,
-      user_id,
+      user_id: user_id > 0 ? user_id : 1,
       phone_number,
       message,
       notification_type: type,
@@ -558,14 +589,24 @@ export async function queueNotification(user_id: number, phone_number: string, m
     const us = getStoredMock<User[]>('users', mockData.users)
     return {
       ...newNotif,
-      users: us.find(u => u.user_id === user_id)
+      users: us.find(u => u.user_id === newNotif.user_id)
     }
   }
   try {
+    let targetUserId = user_id
+    if (targetUserId <= 0) {
+      const { data: firstUser } = await supabase.from('users').select('user_id').limit(1).maybeSingle()
+      if (firstUser) {
+        targetUserId = firstUser.user_id
+      } else {
+        return null
+      }
+    }
+
     const { data, error } = await supabase
       .from('notifications')
       .insert([{
-        user_id,
+        user_id: targetUserId,
         phone_number,
         message,
         notification_type: type,
@@ -641,6 +682,15 @@ export async function updateUser(user_id: number, updates: Partial<User>): Promi
  * Returns the public URL string on success, or null on failure.
  */
 export async function uploadBookCover(file: File, isbn: string): Promise<string | null> {
+  if (useMock) {
+    return new Promise((resolve) => {
+      const reader = new FileReader()
+      reader.onloadend = () => {
+        resolve(reader.result as string)
+      }
+      reader.readAsDataURL(file)
+    })
+  }
   const ext = file.name.split('.').pop() || 'jpg'
   const path = `covers/${isbn.replace(/[^a-zA-Z0-9]/g, '-')}-${Date.now()}.${ext}`
   try {
@@ -661,6 +711,15 @@ export async function uploadBookCover(file: File, isbn: string): Promise<string 
  * Returns the public URL string on success, or null on failure.
  */
 export async function uploadProfilePhoto(file: File, userId: number): Promise<string | null> {
+  if (useMock) {
+    return new Promise((resolve) => {
+      const reader = new FileReader()
+      reader.onloadend = () => {
+        resolve(reader.result as string)
+      }
+      reader.readAsDataURL(file)
+    })
+  }
   const ext = file.name.split('.').pop() || 'jpg'
   const path = `avatars/${userId}-${Date.now()}.${ext}`
   try {
@@ -703,4 +762,263 @@ export async function uploadEbookFile(file: File, isbn: string): Promise<string 
     console.error('Upload e-book file error:', e)
     return null
   }
+}
+
+// -------------------------------------------------------------
+// PASSWORD & AUTH UTILITIES
+// -------------------------------------------------------------
+export async function hashPassword(password: string): Promise<string> {
+  if (!password) return ''
+  const encoder = new TextEncoder()
+  const data = encoder.encode(password)
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data)
+  const hashArray = Array.from(new Uint8Array(hashBuffer))
+  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('')
+}
+
+// Semaphore SMS API Integration (Sender: TranslertPH)
+export async function sendSMSViaSemaphore(phoneNumber: string, message: string): Promise<boolean> {
+  try {
+    const apiKey = 'f18fe7eb9f2f4b5477776b98d8b55565'
+    const formattedNumber = phoneNumber.replace(/[^0-9+]/g, '')
+    
+    // Prefix message body with [LibraSmart Library Desk] so recipients know it comes from LibraSmart even though sender ID is TranslertPH
+    let finalMessage = message
+    if (!finalMessage.includes('LibraSmart') && !finalMessage.includes('Libra Smart')) {
+      finalMessage = `[LibraSmart Library Desk] ${finalMessage}`
+    }
+
+    const params = new URLSearchParams()
+    params.append('apikey', apiKey)
+    params.append('number', formattedNumber)
+    params.append('message', finalMessage)
+    params.append('sendername', 'TranslertPH')
+
+    // Endpoints array: Vite proxy first, then CORS proxy fallbacks, then direct endpoint
+    const endpoints = [
+      '/api/semaphore/messages',
+      'https://corsproxy.io/?' + encodeURIComponent('https://api.semaphore.co/api/v4/messages'),
+      'https://api.allorigins.win/raw?url=' + encodeURIComponent('https://api.semaphore.co/api/v4/messages'),
+      'https://api.semaphore.co/api/v4/messages'
+    ]
+
+    let lastError: any = null
+    for (const endpoint of endpoints) {
+      try {
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: params.toString()
+        })
+        if (res.ok) {
+          const data = await res.json()
+          console.log('Semaphore SMS response (TranslertPH):', data)
+          return true
+        }
+      } catch (err) {
+        lastError = err
+      }
+    }
+
+    console.error('Failed to send SMS via Semaphore (all endpoints failed):', lastError)
+    return false
+  } catch (err) {
+    console.error('Failed to send SMS via Semaphore:', err)
+    return false
+  }
+}
+
+// -------------------------------------------------------------
+// CANCEL TRANSACTION API
+// -------------------------------------------------------------
+export async function cancelTransaction(transaction_id: number, book_id?: number): Promise<boolean> {
+  if (useMock) {
+    const txs = getStoredMock<Transaction[]>('transactions', mockData.transactions)
+    const idx = txs.findIndex(t => t.transaction_id === transaction_id)
+    if (idx !== -1) {
+      const targetBookId = book_id || txs[idx].book_id
+      txs[idx].status = 'Cancelled'
+      saveStoredMock('transactions', txs)
+
+      if (targetBookId) {
+        const bs = getStoredMock<Book[]>('books', mockData.books)
+        const book = bs.find(b => b.book_id === targetBookId)
+        if (book) {
+          const newAvail = Math.min(book.total_copies ?? 1, (book.available_copies ?? 0) + 1)
+          await updateBook(targetBookId, {
+            available_copies: newAvail,
+            status: 'Available'
+          })
+        }
+      }
+      return true
+    }
+    return false
+  }
+  try {
+    const { error } = await supabase
+      .from('transactions')
+      .update({ status: 'Cancelled' })
+      .eq('transaction_id', transaction_id)
+    if (error) throw error
+
+    if (book_id) {
+      const { data: bookData } = await supabase
+        .from('books')
+        .select('available_copies, total_copies')
+        .eq('book_id', book_id)
+        .single()
+      if (bookData) {
+        const currentAvail = bookData.available_copies ?? 0
+        const total = bookData.total_copies ?? 1
+        const newAvail = Math.min(total, currentAvail + 1)
+        await supabase
+          .from('books')
+          .update({ available_copies: newAvail, status: 'Available' })
+          .eq('book_id', book_id)
+      }
+    }
+    return true
+  } catch (e) {
+    console.error('Cancel transaction error:', e)
+    return false
+  }
+}
+
+// -------------------------------------------------------------
+// TRASH / SOFT DELETE API
+// -------------------------------------------------------------
+const getStoredTrash = (): TrashRecord[] => {
+  const data = localStorage.getItem('librasmart_mock_trash')
+  return data ? JSON.parse(data) : []
+}
+
+const saveStoredTrash = (trash: TrashRecord[]) => {
+  localStorage.setItem('librasmart_mock_trash', JSON.stringify(trash))
+}
+
+export async function fetchTrash(): Promise<TrashRecord[]> {
+  if (useMock) {
+    return getStoredTrash()
+  }
+  try {
+    const { data, error } = await supabase.from('trash_records').select('*').order('deleted_at', { ascending: false })
+    if (error) throw error
+    return data as TrashRecord[]
+  } catch {
+    return getStoredTrash()
+  }
+}
+
+export async function softDeleteBook(book: Book, deleted_by?: string): Promise<boolean> {
+  const trashItem: TrashRecord = {
+    trash_id: Date.now(),
+    record_type: 'Book',
+    original_id: book.book_id,
+    title_or_name: book.title,
+    data: book,
+    deleted_at: new Date().toISOString(),
+    deleted_by: deleted_by || 'Admin'
+  }
+
+  // Remove from books list
+  await deleteBook(book.book_id)
+
+  if (useMock) {
+    const trash = getStoredTrash()
+    trash.unshift(trashItem)
+    saveStoredTrash(trash)
+    return true
+  }
+  try {
+    await supabase.from('trash_records').insert([trashItem])
+    return true
+  } catch (e) {
+    console.error('Soft delete book error:', e)
+    const trash = getStoredTrash()
+    trash.unshift(trashItem)
+    saveStoredTrash(trash)
+    return true
+  }
+}
+
+export async function softDeleteUser(user: User, deleted_by?: string): Promise<boolean> {
+  const trashItem: TrashRecord = {
+    trash_id: Date.now(),
+    record_type: 'User',
+    original_id: user.user_id,
+    title_or_name: `${user.name} (${user.username})`,
+    data: user,
+    deleted_at: new Date().toISOString(),
+    deleted_by: deleted_by || 'Admin'
+  }
+
+  if (useMock) {
+    const users = getStoredMock<User[]>('users', mockData.users)
+    const filtered = users.filter(u => u.user_id !== user.user_id)
+    saveStoredMock('users', filtered)
+    const trash = getStoredTrash()
+    trash.unshift(trashItem)
+    saveStoredTrash(trash)
+    return true
+  }
+  try {
+    await supabase.from('users').delete().eq('user_id', user.user_id)
+    await supabase.from('trash_records').insert([trashItem])
+    return true
+  } catch (e) {
+    console.error('Soft delete user error:', e)
+    const trash = getStoredTrash()
+    trash.unshift(trashItem)
+    saveStoredTrash(trash)
+    return true
+  }
+}
+
+export async function restoreFromTrash(trashRecord: TrashRecord): Promise<boolean> {
+  if (trashRecord.record_type === 'Book') {
+    const book = trashRecord.data as Book
+    await addBook(book)
+  } else if (trashRecord.record_type === 'User') {
+    const user = trashRecord.data as User
+    const users = getStoredMock<User[]>('users', mockData.users)
+    users.push(user)
+    saveStoredMock('users', users)
+    try {
+      await supabase.from('users').insert([user])
+    } catch (e) {
+      console.warn('Database restore user warning:', e)
+    }
+  }
+
+  if (useMock) {
+    const trash = getStoredTrash().filter(t => t.trash_id !== trashRecord.trash_id)
+    saveStoredTrash(trash)
+    return true
+  }
+  try {
+    await supabase.from('trash_records').delete().eq('trash_id', trashRecord.trash_id)
+    const trash = getStoredTrash().filter(t => t.trash_id !== trashRecord.trash_id)
+    saveStoredTrash(trash)
+    return true
+  } catch (e) {
+    console.error('Restore from trash error:', e)
+    const trash = getStoredTrash().filter(t => t.trash_id !== trashRecord.trash_id)
+    saveStoredTrash(trash)
+    return true
+  }
+}
+
+export async function permanentlyDeleteFromTrash(trash_id: number): Promise<boolean> {
+  const trash = getStoredTrash().filter(t => t.trash_id !== trash_id)
+  saveStoredTrash(trash)
+
+  if (!useMock) {
+    try {
+      await supabase.from('trash_records').delete().eq('trash_id', trash_id)
+    } catch (e) {
+      console.error('Permanent delete from trash error:', e)
+    }
+  }
+  return true
 }
