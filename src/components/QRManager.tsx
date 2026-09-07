@@ -41,6 +41,8 @@ export function QRManager({ currentUser, onLogCreated }: QRManagerProps): React.
     scanTypeRef.current = scanType
   }, [scanType])
 
+  const streamRef = useRef<MediaStream | null>(null)
+
   const stopCamera = () => {
     if (scanIntervalRef.current) {
       window.clearInterval(scanIntervalRef.current)
@@ -51,6 +53,11 @@ export function QRManager({ currentUser, onLogCreated }: QRManagerProps): React.
     if (video?.srcObject instanceof MediaStream) {
       video.srcObject.getTracks().forEach((track) => track.stop())
       video.srcObject = null
+    }
+
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop())
+      streamRef.current = null
     }
 
     setCameraActive(false)
@@ -137,7 +144,7 @@ export function QRManager({ currentUser, onLogCreated }: QRManagerProps): React.
 
   const startCamera = async () => {
     if (!navigator.mediaDevices?.getUserMedia) {
-      setCameraError('Camera access requires HTTPS or supported browser context. Use QR photo upload or Quick Pass below.')
+      setCameraError('Live camera requires HTTPS or WebKit context. Use "Snap / Photo" below.')
       return
     }
 
@@ -145,34 +152,58 @@ export function QRManager({ currentUser, onLogCreated }: QRManagerProps): React.
     setScanResult(null)
     setLoading(true)
 
-    try {
-      let mediaStream: MediaStream
-      try {
-        mediaStream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }
-        })
-      } catch {
-        mediaStream = await navigator.mediaDevices.getUserMedia({ video: true })
-      }
+    // Ensure camera active state is true so video element is rendered in DOM
+    setCameraActive(true)
 
-      if (videoRef.current) {
-        videoRef.current.setAttribute('playsinline', 'true')
-        videoRef.current.setAttribute('muted', 'true')
-        videoRef.current.setAttribute('autoplay', 'true')
-        videoRef.current.srcObject = mediaStream
-        await videoRef.current.play().catch(e => console.warn('Video play warning:', e))
+    const constraintsToTry = [
+      { video: { facingMode: { exact: 'environment' } } },
+      { video: { facingMode: 'environment' } },
+      { video: { facingMode: 'user' } },
+      { video: true }
+    ]
+
+    let mediaStream: MediaStream | null = null
+    let lastError: unknown = null
+
+    for (const constraint of constraintsToTry) {
+      try {
+        mediaStream = await navigator.mediaDevices.getUserMedia(constraint)
+        if (mediaStream) break
+      } catch (e) {
+        lastError = e
       }
-      setCameraActive(true)
-      setScanResult('Point camera at the library gate QR code.')
-      scanIntervalRef.current = window.setInterval(scanFrame, 400)
-    } catch (err: unknown) {
-      const errName = (err as Error)?.name || ''
+    }
+
+    if (!mediaStream) {
+      setCameraActive(false)
+      const errName = (lastError as Error)?.name || ''
       if (errName === 'NotAllowedError' || errName === 'PermissionDeniedError') {
-        setCameraError('Camera permission denied. Grant access or use Quick Pass below.')
+        setCameraError('Camera permission denied. Grant access or tap "Snap / Photo" below.')
       } else {
-        setCameraError('Live camera not active. Ensure HTTPS connection or tap Quick Pass below.')
+        setCameraError('Live camera stream unavailable. Try "Snap / Photo" below.')
       }
+      setLoading(false)
+      return
+    }
+
+    try {
+      const video = videoRef.current
+      if (video) {
+        video.setAttribute('playsinline', 'true')
+        video.setAttribute('webkit-playsinline', 'true')
+        video.setAttribute('muted', 'true')
+        video.setAttribute('autoplay', 'true')
+        video.srcObject = mediaStream
+        streamRef.current = mediaStream
+        await video.play().catch(e => console.warn('Video play warning:', e))
+      }
+      setScanResult('Point camera at the library gate QR code.')
+      if (scanIntervalRef.current) window.clearInterval(scanIntervalRef.current)
+      scanIntervalRef.current = window.setInterval(scanFrame, 300)
+    } catch (err: unknown) {
       console.warn('Camera error:', err)
+      setCameraError('Live camera error. Tap "Snap / Photo" below.')
+      setCameraActive(false)
     } finally {
       setLoading(false)
     }
@@ -395,16 +426,15 @@ export function QRManager({ currentUser, onLogCreated }: QRManagerProps): React.
                 <div className="border-br"></div>
               </div>
 
-              {cameraActive ? (
-                <video
-                  ref={videoRef}
-                  className="scanner-video"
-                  autoPlay
-                  muted
-                  playsInline
-                  style={{ width: '100%', height: '100%', objectFit: 'cover', background: '#000000' }}
-                />
-              ) : (
+              <video
+                ref={videoRef}
+                className="scanner-video"
+                autoPlay
+                muted
+                playsInline
+                style={{ display: cameraActive ? 'block' : 'none', width: '100%', height: '100%', objectFit: 'cover', background: '#000000' }}
+              />
+              {!cameraActive && (
                 <QRCodeSVG
                   value="MPCI-LIBRARY-GATE"
                   size={140}
@@ -451,7 +481,7 @@ export function QRManager({ currentUser, onLogCreated }: QRManagerProps): React.
                 disabled={loading}
                 style={{ margin: 0, justifyContent: 'center', background: 'var(--color-surface-soft)', border: '1px solid var(--color-border)', fontSize: '0.88rem' }}
               >
-                Upload QR Photo <Upload size={16} />
+                Snap / Photo <Upload size={16} />
               </button>
             </div>
 
@@ -459,6 +489,7 @@ export function QRManager({ currentUser, onLogCreated }: QRManagerProps): React.
               ref={fileInputRef}
               type="file"
               accept="image/*"
+              capture="environment"
               onChange={handleFileUpload}
               style={{ display: 'none' }}
             />
