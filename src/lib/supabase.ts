@@ -898,21 +898,29 @@ const saveStoredTrash = (trash: TrashRecord[]) => {
 }
 
 export async function fetchTrash(): Promise<TrashRecord[]> {
+  const localTrash = getStoredTrash()
   if (useMock) {
-    return getStoredTrash()
+    return localTrash
   }
   try {
     const { data, error } = await supabase.from('trash_records').select('*').order('deleted_at', { ascending: false })
     if (error) throw error
-    return data as TrashRecord[]
-  } catch {
-    return getStoredTrash()
+    const remoteTrash = (data as TrashRecord[]) || []
+    const combined = [...remoteTrash]
+    for (const item of localTrash) {
+      if (!combined.some(r => r.trash_id === item.trash_id || (r.original_id === item.original_id && r.record_type === item.record_type))) {
+        combined.push(item)
+      }
+    }
+    return combined
+  } catch (err) {
+    console.warn('Fetch trash from database error, fallback to local:', err)
+    return localTrash
   }
 }
 
 export async function softDeleteBook(book: Book, deleted_by?: string): Promise<boolean> {
-  const trashItem: TrashRecord = {
-    trash_id: Date.now(),
+  const payload = {
     record_type: 'Book',
     original_id: book.book_id,
     title_or_name: book.title,
@@ -921,30 +929,50 @@ export async function softDeleteBook(book: Book, deleted_by?: string): Promise<b
     deleted_by: deleted_by || 'Admin'
   }
 
-  // Remove from books list
-  await deleteBook(book.book_id)
+  // Remove book from local storage mock
+  deleteBook(book.book_id)
+
+  const localItem: TrashRecord = {
+    trash_id: Date.now(),
+    record_type: 'Book',
+    original_id: book.book_id,
+    title_or_name: book.title,
+    data: book,
+    deleted_at: payload.deleted_at,
+    deleted_by: payload.deleted_by
+  }
 
   if (useMock) {
     const trash = getStoredTrash()
-    trash.unshift(trashItem)
+    trash.unshift(localItem)
     saveStoredTrash(trash)
     return true
   }
+
   try {
-    await supabase.from('trash_records').insert([trashItem])
+    // 1. Save to Supabase trash_records (omitting trash_id so PostgreSQL SERIAL auto-increments)
+    const { error: insertErr } = await supabase.from('trash_records').insert([payload])
+    if (insertErr) console.warn('Database insert to trash_records error:', insertErr)
+
+    // 2. Clean up referencing transactions to satisfy foreign key constraint transactions_book_id_fkey
+    await supabase.from('transactions').delete().eq('book_id', book.book_id)
+
+    // 3. Delete book record from books table
+    const { error: deleteErr } = await supabase.from('books').delete().eq('book_id', book.book_id)
+    if (deleteErr) console.warn('Database delete book error:', deleteErr)
+
     return true
   } catch (e) {
     console.error('Soft delete book error:', e)
     const trash = getStoredTrash()
-    trash.unshift(trashItem)
+    trash.unshift(localItem)
     saveStoredTrash(trash)
     return true
   }
 }
 
 export async function softDeleteUser(user: User, deleted_by?: string): Promise<boolean> {
-  const trashItem: TrashRecord = {
-    trash_id: Date.now(),
+  const payload = {
     record_type: 'User',
     original_id: user.user_id,
     title_or_name: `${user.name} (${user.username})`,
@@ -953,23 +981,45 @@ export async function softDeleteUser(user: User, deleted_by?: string): Promise<b
     deleted_by: deleted_by || 'Admin'
   }
 
+  const localItem: TrashRecord = {
+    trash_id: Date.now(),
+    record_type: 'User',
+    original_id: user.user_id,
+    title_or_name: payload.title_or_name,
+    data: user,
+    deleted_at: payload.deleted_at,
+    deleted_by: payload.deleted_by
+  }
+
   if (useMock) {
     const users = getStoredMock<User[]>('users', mockData.users)
     const filtered = users.filter(u => u.user_id !== user.user_id)
     saveStoredMock('users', filtered)
     const trash = getStoredTrash()
-    trash.unshift(trashItem)
+    trash.unshift(localItem)
     saveStoredTrash(trash)
     return true
   }
+
   try {
-    await supabase.from('users').delete().eq('user_id', user.user_id)
-    await supabase.from('trash_records').insert([trashItem])
+    // 1. Save to Supabase trash_records
+    const { error: insertErr } = await supabase.from('trash_records').insert([payload])
+    if (insertErr) console.warn('Database insert to trash_records error:', insertErr)
+
+    // 2. Clean up dependent rows in transactions, library_logs, notifications to satisfy foreign key constraints
+    await supabase.from('transactions').delete().eq('user_id', user.user_id)
+    await supabase.from('library_logs').delete().eq('user_id', user.user_id)
+    await supabase.from('notifications').delete().eq('user_id', user.user_id)
+
+    // 3. Delete user record from users table
+    const { error: deleteErr } = await supabase.from('users').delete().eq('user_id', user.user_id)
+    if (deleteErr) console.warn('Database delete user error:', deleteErr)
+
     return true
   } catch (e) {
     console.error('Soft delete user error:', e)
     const trash = getStoredTrash()
-    trash.unshift(trashItem)
+    trash.unshift(localItem)
     saveStoredTrash(trash)
     return true
   }
@@ -982,31 +1032,40 @@ export async function restoreFromTrash(trashRecord: TrashRecord): Promise<boolea
   } else if (trashRecord.record_type === 'User') {
     const user = trashRecord.data as User
     const users = getStoredMock<User[]>('users', mockData.users)
-    users.push(user)
-    saveStoredMock('users', users)
-    try {
-      await supabase.from('users').insert([user])
-    } catch (e) {
-      console.warn('Database restore user warning:', e)
+    if (!users.some(u => u.user_id === user.user_id)) {
+      users.push(user)
+      saveStoredMock('users', users)
+    }
+    if (!useMock) {
+      try {
+        await supabase.from('users').insert([{
+          name: user.name,
+          username: user.username,
+          password: user.password,
+          role: user.role,
+          program_strand: user.program_strand,
+          academic_level: user.academic_level,
+          phone_number: user.phone_number,
+          avatar_url: user.avatar_url
+        }])
+      } catch (e) {
+        console.warn('Database restore user warning:', e)
+      }
     }
   }
 
-  if (useMock) {
-    const trash = getStoredTrash().filter(t => t.trash_id !== trashRecord.trash_id)
-    saveStoredTrash(trash)
-    return true
+  // Remove from local storage
+  const trash = getStoredTrash().filter(t => t.trash_id !== trashRecord.trash_id)
+  saveStoredTrash(trash)
+
+  if (!useMock) {
+    try {
+      await supabase.from('trash_records').delete().eq('trash_id', trashRecord.trash_id)
+    } catch (e) {
+      console.warn('Delete from trash_records table warning:', e)
+    }
   }
-  try {
-    await supabase.from('trash_records').delete().eq('trash_id', trashRecord.trash_id)
-    const trash = getStoredTrash().filter(t => t.trash_id !== trashRecord.trash_id)
-    saveStoredTrash(trash)
-    return true
-  } catch (e) {
-    console.error('Restore from trash error:', e)
-    const trash = getStoredTrash().filter(t => t.trash_id !== trashRecord.trash_id)
-    saveStoredTrash(trash)
-    return true
-  }
+  return true
 }
 
 export async function permanentlyDeleteFromTrash(trash_id: number): Promise<boolean> {

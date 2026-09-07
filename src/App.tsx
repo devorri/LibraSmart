@@ -110,6 +110,10 @@ export default function App() {
   const [newStudentLoading, setNewStudentLoading] = useState(false)
   const [selectedManualBorrowStudentId, setSelectedManualBorrowStudentId] = useState<number | null>(null)
   const [selectedManualBorrowBookId, setSelectedManualBorrowBookId] = useState<number | null>(null)
+  const [manualStudentFilter, setManualStudentFilter] = useState('')
+  const [manualBookFilter, setManualBookFilter] = useState('')
+  const [showStudentDropdown, setShowStudentDropdown] = useState(false)
+  const [showBookDropdown, setShowBookDropdown] = useState(false)
   const [manualBorrowDueDays, setManualBorrowDueDays] = useState(7)
   const [manualBorrowError, setManualBorrowError] = useState('')
   const [manualBorrowSuccess, setManualBorrowSuccess] = useState('')
@@ -123,6 +127,8 @@ export default function App() {
   const [changePasswordOtp, setChangePasswordOtp] = useState('')
   const [changePasswordOtpStep, setChangePasswordOtpStep] = useState(false)
   const [generatedChangePasswordOtp, setGeneratedChangePasswordOtp] = useState('')
+  const [changePasswordOtpExpiresAt, setChangePasswordOtpExpiresAt] = useState<number | null>(null)
+  const [changePasswordTimerSec, setChangePasswordTimerSec] = useState<number>(0)
   const [changePasswordMsg, setChangePasswordMsg] = useState<{ type: 'error' | 'success'; text: string } | null>(null)
   const [changePasswordLoading, setChangePasswordLoading] = useState(false)
   
@@ -612,16 +618,68 @@ export default function App() {
     setChangePasswordLoading(true)
 
     const otp = Math.floor(100000 + Math.random() * 900000).toString()
+    const expiresAt = Date.now() + 5 * 60 * 1000 // 5 minutes validity
+
+    const sessionPayload = {
+      code: otp,
+      expiresAt,
+      user_id: currentUser.user_id
+    }
+    sessionStorage.setItem('librasmart_change_pass_otp', JSON.stringify(sessionPayload))
+
     setGeneratedChangePasswordOtp(otp)
+    setChangePasswordOtpExpiresAt(expiresAt)
+    setChangePasswordTimerSec(300)
 
     const userPhone = currentUser.phone_number || '+639123456789'
-    const msg = `LibraSmart OTP: Verification code to change password is ${otp}.`
+    const msg = `LibraSmart OTP: Verification code to change password is ${otp}. Valid for 5 minutes.`
 
     await sendSMSViaSemaphore(userPhone, msg)
     await queueNotification(currentUser.user_id, userPhone, msg, 'Transaction')
 
     setChangePasswordOtpStep(true)
-    setChangePasswordMsg({ type: 'success', text: `OTP verification code sent to ${userPhone} via SMS.` })
+    setChangePasswordMsg({ type: 'success', text: `OTP verification code sent to ${userPhone} via SMS. Valid for 5 minutes.` })
+    setChangePasswordLoading(false)
+  }
+
+  // 5-minute countdown effect for OTP
+  useEffect(() => {
+    if (!changePasswordOtpStep || !changePasswordOtpExpiresAt) return
+    const updateTimer = () => {
+      const remaining = Math.max(0, Math.floor((changePasswordOtpExpiresAt - Date.now()) / 1000))
+      setChangePasswordTimerSec(remaining)
+    }
+    updateTimer()
+    const interval = setInterval(updateTimer, 1000)
+    return () => clearInterval(interval)
+  }, [changePasswordOtpStep, changePasswordOtpExpiresAt])
+
+  const handleResendChangePasswordOtp = async () => {
+    if (!currentUser) return
+    setChangePasswordLoading(true)
+    setChangePasswordMsg(null)
+
+    const otp = Math.floor(100000 + Math.random() * 900000).toString()
+    const expiresAt = Date.now() + 5 * 60 * 1000 // 5 minutes validity
+
+    const sessionPayload = {
+      code: otp,
+      expiresAt,
+      user_id: currentUser.user_id
+    }
+    sessionStorage.setItem('librasmart_change_pass_otp', JSON.stringify(sessionPayload))
+
+    setGeneratedChangePasswordOtp(otp)
+    setChangePasswordOtpExpiresAt(expiresAt)
+    setChangePasswordTimerSec(300)
+
+    const userPhone = currentUser.phone_number || '+639123456789'
+    const msg = `LibraSmart OTP: New verification code to change password is ${otp}. Valid for 5 minutes.`
+
+    await sendSMSViaSemaphore(userPhone, msg)
+    await queueNotification(currentUser.user_id, userPhone, msg, 'Transaction')
+
+    setChangePasswordMsg({ type: 'success', text: `New OTP code sent to ${userPhone}. Valid for 5 minutes.` })
     setChangePasswordLoading(false)
   }
 
@@ -630,7 +688,28 @@ export default function App() {
     setChangePasswordMsg(null)
 
     if (!currentUser) return
-    if (changePasswordOtp.trim() !== generatedChangePasswordOtp) {
+
+    // Verify session storage & 5-minute expiration
+    const sessionStr = sessionStorage.getItem('librasmart_change_pass_otp')
+    let validCode = generatedChangePasswordOtp
+    let validExpiresAt = changePasswordOtpExpiresAt
+
+    if (sessionStr) {
+      try {
+        const parsed = JSON.parse(sessionStr)
+        if (parsed.code) validCode = parsed.code
+        if (parsed.expiresAt) validExpiresAt = parsed.expiresAt
+      } catch (err) {
+        console.warn('Session parse error:', err)
+      }
+    }
+
+    if (validExpiresAt && Date.now() > validExpiresAt) {
+      setChangePasswordMsg({ type: 'error', text: 'OTP verification code has expired (5-minute limit reached). Tap Resend OTP.' })
+      return
+    }
+
+    if (changePasswordOtp.trim() !== validCode) {
       setChangePasswordMsg({ type: 'error', text: 'Invalid OTP code. Please check your SMS notification.' })
       return
     }
@@ -641,6 +720,7 @@ export default function App() {
     const success = await updateUser(currentUser.user_id, { password: hashedNew })
 
     if (success) {
+      sessionStorage.removeItem('librasmart_change_pass_otp')
       setCurrentUser(prev => prev ? { ...prev, password: hashedNew } : prev)
       setChangePasswordMsg({ type: 'success', text: 'Password updated successfully!' })
       setTimeout(() => {
@@ -650,6 +730,7 @@ export default function App() {
         setConfirmPasswordInput('')
         setChangePasswordOtp('')
         setChangePasswordOtpStep(false)
+        setChangePasswordOtpExpiresAt(null)
         setChangePasswordMsg(null)
       }, 1500)
     } else {
@@ -1517,7 +1598,7 @@ export default function App() {
                     <div className="search-engine-results">
                       <div className="search-engine-heading">
                         <div>
-                          <p className="eyebrow">Online search</p>
+                          <p className="eyebrow">E-Book</p>
                           <h3>Google Books results for "{query.trim()}"</h3>
                         </div>
                         <span>{visibleExternalSearchStatus === 'loading' ? 'Searching...' : `${visibleExternalBookResults.length} results`}</span>
@@ -2695,9 +2776,6 @@ export default function App() {
                         <option value="HUMSS">HUMSS (Humanities & Social Sciences)</option>
                         <option value="Healthcare">Healthcare Services</option>
                         <option value="IT">IT / BS In Information Technology</option>
-                        <option value="BSA">BSA (BS In Accountancy)</option>
-                        <option value="BSBA">BSBA (BS In Business Administration)</option>
-                        <option value="BSED">BSED (Bachelor of Secondary Education)</option>
                       </select>
                     </div>
 
@@ -2708,12 +2786,20 @@ export default function App() {
                         value={newStudentAcademicLevel}
                         onChange={(e) => setNewStudentAcademicLevel(e.target.value)}
                       >
-                        <option value="1st Year">1st Year Course</option>
-                        <option value="2nd Year">2nd Year Course</option>
-                        <option value="3rd Year">3rd Year Course</option>
-                        <option value="4th Year">4th Year Course</option>
-                        <option value="Grade 11">Grade 11 Senior High</option>
-                        <option value="Grade 12">Grade 12 Senior High</option>
+                        <optgroup label="Junior High School">
+                          <option value="Grade 7">Grade 7</option>
+                          <option value="Grade 8">Grade 8</option>
+                          <option value="Grade 9">Grade 9</option>
+                          <option value="Grade 10">Grade 10</option>
+                        </optgroup>
+                        <optgroup label="Senior High School">
+                          <option value="Grade 11">Grade 11</option>
+                          <option value="Grade 12">Grade 12</option>
+                        </optgroup>
+                        <optgroup label="College (1st - 2nd Year)">
+                          <option value="1st Year">1st Year Course</option>
+                          <option value="2nd Year">2nd Year Course</option>
+                        </optgroup>
                       </select>
                     </div>
                   </div>
@@ -2725,43 +2811,147 @@ export default function App() {
 
                 <div className="manual-lend-block">
                   <h4>Manual Checkout for Offline Students</h4>
-                  <p className="panel-subtitle">Issue a physical book to a student directly when they can’t access the web app.</p>
+                  <p className="panel-subtitle">Type student or book details to search database records and issue a physical copy directly.</p>
                   {manualBorrowError && <div className="login-alert error">{manualBorrowError}</div>}
                   {manualBorrowSuccess && <div className="login-alert success">{manualBorrowSuccess}</div>}
                   <form onSubmit={handleManualLendBook} className="admin-form">
-                    <div className="form-group">
-                      <label htmlFor="manual-student">Student Account</label>
-                      <select
-                        id="manual-student"
-                        value={selectedManualBorrowStudentId ?? ''}
-                        onChange={(e) => setSelectedManualBorrowStudentId(Number(e.target.value) || null)}
-                      >
-                        <option value="">Select student</option>
-                        {users.filter((u) => u.role === 'Student').map((student) => (
-                          <option key={student.user_id} value={student.user_id}>
-                            {student.name} — {student.username}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div className="form-group">
-                      <label htmlFor="manual-book">Available Book</label>
-                      <select
-                        id="manual-book"
-                        value={selectedManualBorrowBookId ?? ''}
-                        onChange={(e) => setSelectedManualBorrowBookId(Number(e.target.value) || null)}
-                      >
-                        <option value="">Select book</option>
-                        {books.filter((book) => book.status === 'Available' && (book.available_copies ?? 0) > 0).map((book) => (
-                          <option key={book.book_id} value={book.book_id}>
-                            {book.title} — {book.author}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
                     <div className="form-row-2">
+                      {/* SEARCHABLE STUDENT COMBOBOX */}
+                      <div className="form-group combobox-container">
+                        <label htmlFor="search-manual-student">Search Student Account</label>
+                        <input
+                          id="search-manual-student"
+                          type="text"
+                          placeholder="Type student name, username, or strand..."
+                          value={manualStudentFilter}
+                          onFocus={() => setShowStudentDropdown(true)}
+                          onBlur={() => setTimeout(() => setShowStudentDropdown(false), 200)}
+                          onChange={(e) => {
+                            setManualStudentFilter(e.target.value)
+                            setShowStudentDropdown(true)
+                            if (selectedManualBorrowStudentId) {
+                              setSelectedManualBorrowStudentId(null)
+                            }
+                          }}
+                          autoComplete="off"
+                        />
+                        {selectedManualBorrowStudentId && (
+                          <div className="selected-badge-info">
+                            Selected Student ID: #{selectedManualBorrowStudentId}
+                          </div>
+                        )}
+
+                        {showStudentDropdown && (
+                          <div className="combobox-dropdown">
+                            {users
+                              .filter((u) => u.role === 'Student')
+                              .filter((s) =>
+                                !manualStudentFilter.trim() ||
+                                s.name.toLowerCase().includes(manualStudentFilter.toLowerCase()) ||
+                                s.username.toLowerCase().includes(manualStudentFilter.toLowerCase()) ||
+                                (s.program_strand && s.program_strand.toLowerCase().includes(manualStudentFilter.toLowerCase()))
+                              ).length === 0 ? (
+                              <div className="combobox-empty">No matching student accounts found in database.</div>
+                            ) : (
+                              users
+                                .filter((u) => u.role === 'Student')
+                                .filter((s) =>
+                                  !manualStudentFilter.trim() ||
+                                  s.name.toLowerCase().includes(manualStudentFilter.toLowerCase()) ||
+                                  s.username.toLowerCase().includes(manualStudentFilter.toLowerCase()) ||
+                                  (s.program_strand && s.program_strand.toLowerCase().includes(manualStudentFilter.toLowerCase()))
+                                )
+                                .map((student) => (
+                                  <div
+                                    key={student.user_id}
+                                    className={`combobox-item ${selectedManualBorrowStudentId === student.user_id ? 'active' : ''}`}
+                                    onClick={() => {
+                                      setSelectedManualBorrowStudentId(student.user_id)
+                                      setManualStudentFilter(`${student.name} (@${student.username})`)
+                                      setShowStudentDropdown(false)
+                                    }}
+                                  >
+                                    <div>
+                                      <div className="combobox-item-title">{student.name}</div>
+                                      <div className="combobox-item-sub">@{student.username} • {student.program_strand || 'General'} ({student.academic_level || 'Student'})</div>
+                                    </div>
+                                    <span className="badge badge-info">Select</span>
+                                  </div>
+                                ))
+                            )}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* SEARCHABLE BOOK COMBOBOX */}
+                      <div className="form-group combobox-container">
+                        <label htmlFor="search-manual-book">Search Available Book</label>
+                        <input
+                          id="search-manual-book"
+                          type="text"
+                          placeholder="Type book title, author, or ISBN..."
+                          value={manualBookFilter}
+                          onFocus={() => setShowBookDropdown(true)}
+                          onBlur={() => setTimeout(() => setShowBookDropdown(false), 200)}
+                          onChange={(e) => {
+                            setManualBookFilter(e.target.value)
+                            setShowBookDropdown(true)
+                            if (selectedManualBorrowBookId) {
+                              setSelectedManualBorrowBookId(null)
+                            }
+                          }}
+                          autoComplete="off"
+                        />
+                        {selectedManualBorrowBookId && (
+                          <div className="selected-badge-info">
+                            Selected Book ID: #{selectedManualBorrowBookId}
+                          </div>
+                        )}
+
+                        {showBookDropdown && (
+                          <div className="combobox-dropdown">
+                            {books
+                              .filter((book) => book.status === 'Available' && (book.available_copies ?? 0) > 0)
+                              .filter((b) =>
+                                !manualBookFilter.trim() ||
+                                b.title.toLowerCase().includes(manualBookFilter.toLowerCase()) ||
+                                b.author.toLowerCase().includes(manualBookFilter.toLowerCase()) ||
+                                b.isbn.toLowerCase().includes(manualBookFilter.toLowerCase())
+                              ).length === 0 ? (
+                              <div className="combobox-empty">No available books matching search criteria.</div>
+                            ) : (
+                              books
+                                .filter((book) => book.status === 'Available' && (book.available_copies ?? 0) > 0)
+                                .filter((b) =>
+                                  !manualBookFilter.trim() ||
+                                  b.title.toLowerCase().includes(manualBookFilter.toLowerCase()) ||
+                                  b.author.toLowerCase().includes(manualBookFilter.toLowerCase()) ||
+                                  b.isbn.toLowerCase().includes(manualBookFilter.toLowerCase())
+                                )
+                                .map((book) => (
+                                  <div
+                                    key={book.book_id}
+                                    className={`combobox-item ${selectedManualBorrowBookId === book.book_id ? 'active' : ''}`}
+                                    onClick={() => {
+                                      setSelectedManualBorrowBookId(book.book_id)
+                                      setManualBookFilter(`${book.title} — ${book.author}`)
+                                      setShowBookDropdown(false)
+                                    }}
+                                  >
+                                    <div>
+                                      <div className="combobox-item-title">{book.title}</div>
+                                      <div className="combobox-item-sub">By {book.author} • ISBN: {book.isbn}</div>
+                                    </div>
+                                    <span className="badge badge-success">{book.available_copies} avail</span>
+                                  </div>
+                                ))
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="form-row-2" style={{ marginTop: '12px' }}>
                       <div className="form-group">
                         <label htmlFor="manual-due-days">Due Days</label>
                         <input
@@ -2774,7 +2964,11 @@ export default function App() {
                       </div>
                       <div className="form-group">
                         <label>&nbsp;</label>
-                        <button type="submit" className="btn-primary" disabled={manualBorrowLoading}>
+                        <button
+                          type="submit"
+                          className="btn-primary"
+                          disabled={manualBorrowLoading || !selectedManualBorrowStudentId || !selectedManualBorrowBookId}
+                        >
                           {manualBorrowLoading ? 'Issuing...' : 'Issue Book Now'}
                         </button>
                       </div>
@@ -3010,10 +3204,12 @@ export default function App() {
                     value={newBookRelevance} 
                     onChange={(e) => setNewBookRelevance(e.target.value)}
                   >
-                    <option value="BSIT">BSIT</option>
-                    <option value="BSA">BSA</option>
-                    <option value="BSBA">BSBA</option>
-                    <option value="BSED">BSED</option>
+                    <option value="BSIT">BSIT / IT</option>
+                    <option value="ICT">ICT</option>
+                    <option value="SMAW">SMAW</option>
+                    <option value="Automotive">Automotive</option>
+                    <option value="HUMSS">HUMSS</option>
+                    <option value="Healthcare">Healthcare</option>
                     <option value="General">General / All Strands</option>
                   </select>
                 </div>
@@ -3181,6 +3377,26 @@ Chapter 2: Structural implementations..."
               <form onSubmit={handleVerifyChangePassword} className="modal-form">
                 <div className="otp-verification-box" style={{ padding: 0 }}>
                   <p>Enter the 6-digit OTP code sent via SMS to verify password change:</p>
+
+                  <div className="otp-timer-badge" style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    padding: '8px 14px',
+                    margin: '10px 0',
+                    borderRadius: '8px',
+                    background: changePasswordTimerSec > 0 ? 'rgba(45, 212, 191, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+                    border: `1px solid ${changePasswordTimerSec > 0 ? 'rgba(45, 212, 191, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`,
+                    color: changePasswordTimerSec > 0 ? '#2dd4bf' : '#ef4444',
+                    fontSize: '0.85rem'
+                  }}>
+                    <span>Session Expiry Limit:</span>
+                    <strong>
+                      {changePasswordTimerSec > 0
+                        ? `${Math.floor(changePasswordTimerSec / 60).toString().padStart(2, '0')}:${(changePasswordTimerSec % 60).toString().padStart(2, '0')} min`
+                        : 'OTP Expired'}
+                    </strong>
+                  </div>
                   
                   <div className="form-group">
                     <label htmlFor="pass-otp-input">6-Digit Verification Code</label>
@@ -3196,9 +3412,26 @@ Chapter 2: Structural implementations..."
                     />
                   </div>
 
-                  <button type="submit" className="btn-primary" disabled={changePasswordLoading} style={{ width: '100%', marginTop: '1rem' }}>
+                  <button
+                    type="submit"
+                    className="btn-primary"
+                    disabled={changePasswordLoading || changePasswordTimerSec === 0}
+                    style={{ width: '100%', marginTop: '1rem' }}
+                  >
                     {changePasswordLoading ? 'Updating...' : 'Verify OTP & Change Password'} <ShieldCheck size={18} />
                   </button>
+
+                  {changePasswordTimerSec === 0 && (
+                    <button
+                      type="button"
+                      className="btn-primary"
+                      style={{ width: '100%', marginTop: '0.5rem', background: '#3b82f6' }}
+                      onClick={handleResendChangePasswordOtp}
+                      disabled={changePasswordLoading}
+                    >
+                      Resend SMS OTP <ShieldCheck size={18} />
+                    </button>
+                  )}
 
                   <button
                     type="button"

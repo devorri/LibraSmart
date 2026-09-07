@@ -373,12 +373,20 @@ export function Login({ onLoginSuccess }: LoginProps) {
                     value={academicLevel}
                     onChange={(e) => setAcademicLevel(e.target.value)}
                   >
-                    <option value="1st Year">1st Year Course</option>
-                    <option value="2nd Year">2nd Year Course</option>
-                    <option value="3rd Year">3rd Year Course</option>
-                    <option value="4th Year">4th Year Course</option>
-                    <option value="Grade 11">Grade 11 Senior High</option>
-                    <option value="Grade 12">Grade 12 Senior High</option>
+                    <optgroup label="Junior High School">
+                      <option value="Grade 7">Grade 7</option>
+                      <option value="Grade 8">Grade 8</option>
+                      <option value="Grade 9">Grade 9</option>
+                      <option value="Grade 10">Grade 10</option>
+                    </optgroup>
+                    <optgroup label="Senior High School">
+                      <option value="Grade 11">Grade 11 Senior High</option>
+                      <option value="Grade 12">Grade 12 Senior High</option>
+                    </optgroup>
+                    <optgroup label="College (1st - 2nd Year)">
+                      <option value="1st Year">1st Year Course</option>
+                      <option value="2nd Year">2nd Year Course</option>
+                    </optgroup>
                   </select>
                 </div>
               )}
@@ -399,14 +407,11 @@ export function Login({ onLoginSuccess }: LoginProps) {
                     <option value="HUMSS">HUMSS (Humanities & Social Sciences)</option>
                     <option value="Healthcare">Healthcare Services</option>
                   </optgroup>
-                  <optgroup label="College Courses (1st - 2nd Year & Degree)">
+                  <optgroup label="College Courses (1st - 2nd Year)">
                     <option value="IT">IT / BS In Information Technology</option>
                     <option value="Healthcare">Healthcare Course</option>
                     <option value="SMAW">SMAW Course</option>
                     <option value="Automotive">Automotive Course</option>
-                    <option value="BSA">BSA (BS In Accountancy)</option>
-                    <option value="BSBA">BSBA (BS In Business Administration)</option>
-                    <option value="BSED">BSED (Bachelor of Secondary Education)</option>
                   </optgroup>
                 </select>
               </div>

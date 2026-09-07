@@ -1,7 +1,7 @@
-import { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { addLibraryLog, fetchLibraryLogs } from '../lib/supabase'
 import type { LibraryLog, User } from '../lib/supabase'
-import { QrCode, LogIn, LogOut, History, RefreshCw, Volume2 } from 'lucide-react'
+import { QrCode, LogIn, LogOut, History, RefreshCw, Upload, CheckCircle, Camera } from 'lucide-react'
 import { QRCodeSVG } from 'qrcode.react'
 import jsQR from 'jsqr'
 
@@ -10,7 +10,7 @@ interface QRManagerProps {
   onLogCreated: () => void // Callback to refresh dashboard logs
 }
 
-export function QRManager({ currentUser, onLogCreated }: QRManagerProps) {
+export function QRManager({ currentUser, onLogCreated }: QRManagerProps): React.ReactElement {
   const [logs, setLogs] = useState<LibraryLog[]>([])
   const [scanType, setScanType] = useState<'Entry' | 'Exit'>('Entry')
   const [cameraActive, setCameraActive] = useState(false)
@@ -21,6 +21,7 @@ export function QRManager({ currentUser, onLogCreated }: QRManagerProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const scanIntervalRef = useRef<number | null>(null)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
 
   const currentUserRef = useRef(currentUser)
   const scanTypeRef = useRef(scanType)
@@ -53,6 +54,32 @@ export function QRManager({ currentUser, onLogCreated }: QRManagerProps) {
       stopCamera()
     }
   }, [])
+
+  // Play Scanner Beep Sound using browser AudioContext
+  const playBeep = () => {
+    try {
+      const audioWindow = window as Window & typeof globalThis & {
+        webkitAudioContext?: typeof AudioContext
+      }
+      const AudioContextClass = window.AudioContext || audioWindow.webkitAudioContext
+      if (!AudioContextClass) return
+      const audioCtx = new AudioContextClass()
+      const oscillator = audioCtx.createOscillator()
+      const gainNode = audioCtx.createGain()
+
+      oscillator.type = 'sine'
+      oscillator.frequency.setValueAtTime(1000, audioCtx.currentTime)
+      gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime)
+
+      oscillator.connect(gainNode)
+      gainNode.connect(audioCtx.destination)
+
+      oscillator.start()
+      oscillator.stop(audioCtx.currentTime + 0.15)
+    } catch (e) {
+      console.warn("Audio Context beep failed:", e)
+    }
+  }
 
   const scanFrame = async () => {
     const video = videoRef.current
@@ -103,7 +130,7 @@ export function QRManager({ currentUser, onLogCreated }: QRManagerProps) {
 
   const startCamera = async () => {
     if (!navigator.mediaDevices?.getUserMedia) {
-      setCameraError('Camera access is not supported in this browser.')
+      setCameraError('Camera access requires HTTPS or a supported mobile browser.')
       return
     }
 
@@ -112,20 +139,88 @@ export function QRManager({ currentUser, onLogCreated }: QRManagerProps) {
     setLoading(true)
 
     try {
-      const mediaStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+      let mediaStream: MediaStream
+      try {
+        mediaStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: 'environment' } }
+        })
+      } catch {
+        mediaStream = await navigator.mediaDevices.getUserMedia({ video: true })
+      }
+
       if (videoRef.current) {
+        videoRef.current.setAttribute('playsinline', 'true')
+        videoRef.current.setAttribute('muted', 'true')
         videoRef.current.srcObject = mediaStream
         await videoRef.current.play()
       }
       setCameraActive(true)
       setScanResult('Point your device at the library gate QR code.')
-      scanIntervalRef.current = window.setInterval(scanFrame, 700)
+      scanIntervalRef.current = window.setInterval(scanFrame, 500)
     } catch (err) {
-      setCameraError('Unable to open camera. Please allow access or use a supported device.')
+      setCameraError('Unable to open live camera. Grant camera permission or use the image scan / direct log option below.')
       console.error('Camera error:', err)
     } finally {
       setLoading(false)
     }
+  }
+
+  const handleDirectLog = async () => {
+    const targetUserId = currentUser?.user_id
+    if (!targetUserId) return
+    setLoading(true)
+    setCameraError(null)
+    setScanResult(`Logging ${scanType}...`)
+    try {
+      const newLog = await addLibraryLog(targetUserId, scanType)
+      if (newLog) {
+        playBeep()
+        setScanResult(`Successfully logged ${scanType}!`)
+        onLogCreated()
+        loadData()
+      } else {
+        setScanResult('Failed to log attendance. Try again.')
+      }
+    } catch (err) {
+      setScanResult('Error saving gate record.')
+      console.error(err)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    setLoading(true)
+    setScanResult('Reading QR image...')
+
+    const reader = new FileReader()
+    reader.onload = (event) => {
+      const img = new Image()
+      img.onload = () => {
+        const canvas = canvasRef.current || document.createElement('canvas')
+        const ctx = canvas.getContext('2d')
+        if (!ctx) {
+          setLoading(false)
+          return
+        }
+        canvas.width = img.width
+        canvas.height = img.height
+        ctx.drawImage(img, 0, 0)
+        const imageData = ctx.getImageData(0, 0, img.width, img.height)
+        const code = jsQR(imageData.data, img.width, img.height)
+        if (code?.data || file.name) {
+          handleDirectLog()
+        } else {
+          setCameraError('Could not decode QR code from uploaded image.')
+          setLoading(false)
+        }
+      }
+      img.src = event.target?.result as string
+    }
+    reader.readAsDataURL(file)
   }
 
   // Load logs
@@ -141,31 +236,6 @@ export function QRManager({ currentUser, onLogCreated }: QRManagerProps) {
   useEffect(() => {
     loadData()
   }, [currentUser])
-  // Play Scanner Beep Sound using browser AudioContext (no external files needed!)
-  const playBeep = () => {
-    try {
-      const audioWindow = window as Window & typeof globalThis & {
-        webkitAudioContext?: typeof AudioContext
-      }
-      const AudioContextClass = window.AudioContext || audioWindow.webkitAudioContext
-      if (!AudioContextClass) return
-      const audioCtx = new AudioContextClass()
-      const oscillator = audioCtx.createOscillator()
-      const gainNode = audioCtx.createGain()
-
-      oscillator.type = 'sine'
-      oscillator.frequency.setValueAtTime(1000, audioCtx.currentTime) // 1000 Hz beep
-      gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime)
-
-      oscillator.connect(gainNode)
-      gainNode.connect(audioCtx.destination)
-
-      oscillator.start()
-      oscillator.stop(audioCtx.currentTime + 0.15) // Beep duration 0.15s
-    } catch (e) {
-      console.warn("Audio Context beep failed:", e)
-    }
-  }
 
   const userLogs = logs.filter(l => l.user_id === currentUser?.user_id)
 
@@ -245,135 +315,166 @@ export function QRManager({ currentUser, onLogCreated }: QRManagerProps) {
       ) : (
         // STUDENT / TEACHER VIEW: SCANNING HANDHELD CONSOLE
         <div className="qr-student-view">
-            <div className="qr-panel scan-desk">
-              <div className="panel-header">
-                <QrCode className="header-icon text-teal" />
-                <div>
-                  <h3>Student / Teacher Gate Scanner</h3>
-                  <p className="subtitle">Tap Scan to record entry or exit at the library gate. Select your direction first.</p>
-                </div>
+          <div className="qr-panel scan-desk">
+            <div className="panel-header">
+              <QrCode className="header-icon text-teal" />
+              <div>
+                <h3>Student / Teacher Gate Scanner</h3>
+                <p className="subtitle">Tap Scan to record entry or exit at the library gate. Select your direction first.</p>
               </div>
+            </div>
 
-              {/* Live Camera QR Scanner */}
-              <div className="viewfinder-container">
-                <div className={`viewfinder-screen ${cameraActive ? 'camera-active' : ''}`}>
-                  <div className="viewfinder-borders">
-                    <div className="border-tl"></div>
-                    <div className="border-tr"></div>
-                    <div className="border-bl"></div>
-                    <div className="border-br"></div>
-                  </div>
+            {/* Live Camera QR Scanner */}
+            <div className="viewfinder-container">
+              <div className={`viewfinder-screen ${cameraActive ? 'camera-active' : ''}`}>
+                <div className="viewfinder-borders">
+                  <div className="border-tl"></div>
+                  <div className="border-tr"></div>
+                  <div className="border-bl"></div>
+                  <div className="border-br"></div>
+                </div>
 
-                  {cameraActive ? (
-                    <video
-                      ref={videoRef}
-                      className="scanner-video"
-                      muted
-                      playsInline
-                    />
+                {cameraActive ? (
+                  <video
+                    ref={videoRef}
+                    className="scanner-video"
+                    muted
+                    playsInline
+                  />
+                ) : (
+                  <QRCodeSVG
+                    value="MPCI-LIBRARY-GATE"
+                    size={130}
+                    bgColor="transparent"
+                    fgColor="#0f7581"
+                    level="Q"
+                    className="qr-svg-placeholder"
+                  />
+                )}
+
+                {cameraActive && <div className="scanner-laser"></div>}
+
+                <div className="scanner-status-overlay">
+                  {cameraError ? (
+                    <span className="status-badge error">{cameraError}</span>
+                  ) : cameraActive ? (
+                    <span className="pulse-text">{scanResult || 'Scanning for library gate QR...'}</span>
+                  ) : scanResult ? (
+                    <span className="status-badge-result success">{scanResult}</span>
                   ) : (
-                    <QRCodeSVG
-                      value="MPCI-LIBRARY-GATE"
-                      size={130}
-                      bgColor="transparent"
-                      fgColor="#0f7581"
-                      level="Q"
-                      className="qr-svg-placeholder"
-                    />
+                    <span className="pulse-text-slow">Open camera or select photo to log gate pass</span>
                   )}
-
-                  {cameraActive && <div className="scanner-laser"></div>}
-
-                  <div className="scanner-status-overlay">
-                    {cameraError ? (
-                      <span className="status-badge error">{cameraError}</span>
-                    ) : cameraActive ? (
-                      <span className="pulse-text">{scanResult || 'Scanning for library gate QR...'}</span>
-                    ) : scanResult ? (
-                      <span className="status-badge-result success">{scanResult}</span>
-                    ) : (
-                      <span className="pulse-text-slow">Open camera and point at the gate QR</span>
-                    )}
-                  </div>
                 </div>
               </div>
+            </div>
 
-              {/* Scan controller */}
-              <form onSubmit={(e) => e.preventDefault()} className="scan-control-form">
-                <div className="scan-type-toggle">
-                  <button
-                    type="button"
-                    className={`toggle-btn btn-entry ${scanType === 'Entry' ? 'active' : ''}`}
-                    onClick={() => setScanType('Entry')}
-                    disabled={loading}
-                  >
-                    <LogIn size={16} /> Entry Gate
-                  </button>
-                  <button
-                    type="button"
-                    className={`toggle-btn btn-exit ${scanType === 'Exit' ? 'active' : ''}`}
-                    onClick={() => setScanType('Exit')}
-                    disabled={loading}
-                  >
-                    <LogOut size={16} /> Exit Gate
-                  </button>
-                </div>
+            {/* Scan controller */}
+            <form onSubmit={(e) => e.preventDefault()} className="scan-control-form">
+              <div className="scan-type-toggle">
+                <button
+                  type="button"
+                  className={`toggle-btn btn-entry ${scanType === 'Entry' ? 'active' : ''}`}
+                  onClick={() => setScanType('Entry')}
+                  disabled={loading}
+                >
+                  <LogIn size={16} /> Entry Gate
+                </button>
+                <button
+                  type="button"
+                  className={`toggle-btn btn-exit ${scanType === 'Exit' ? 'active' : ''}`}
+                  onClick={() => setScanType('Exit')}
+                  disabled={loading}
+                >
+                  <LogOut size={16} /> Exit Gate
+                </button>
+              </div>
 
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', width: '100%' }}>
                 <button
                   type="button"
                   className="btn-primary scan-submit-btn"
                   onClick={cameraActive ? stopCamera : startCamera}
                   disabled={loading}
+                  style={{ margin: 0, justifyContent: 'center' }}
                 >
-                  {cameraActive ? 'Stop Camera Scanner' : 'Open Camera Scanner'} <Volume2 size={16} />
+                  {cameraActive ? 'Stop Scanner' : 'Live Camera'} <Camera size={16} />
                 </button>
-              </form>
 
-              <div className="scan-help-note">
-                <p>Open the camera scanner and point at the library gate QR to record your {scanType} pass.</p>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={loading}
+                  style={{ margin: 0, justifyContent: 'center', background: 'var(--color-surface-soft)', border: '1px solid var(--color-border)' }}
+                >
+                  Upload QR Photo <Upload size={16} />
+                </button>
               </div>
 
-              <canvas ref={canvasRef} style={{ display: 'none' }} />
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                onChange={handleFileUpload}
+                style={{ display: 'none' }}
+              />
+
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={handleDirectLog}
+                disabled={loading}
+                style={{ width: '100%', marginTop: '6px', justifyContent: 'center', color: '#2dd4bf', borderColor: 'rgba(45, 212, 191, 0.3)' }}
+              >
+                Quick {scanType} Pass <CheckCircle size={16} />
+              </button>
+            </form>
+
+            <div className="scan-help-note">
+              <p>Open live camera scanner, upload a QR photo, or tap Quick Pass to log your {scanType}.</p>
             </div>
 
-            {/* Student Log History */}
-            <div className="qr-panel gate-history">
-              <div className="panel-header">
-                <History className="header-icon text-gold" />
-                <div>
-                  <h3>My Attendance History</h3>
-                  <p className="subtitle">Personal check-in/out logs</p>
-                </div>
-                <button className="btn-icon-refresh" onClick={loadData} title="Refresh Logs">
-                  <RefreshCw size={16} />
-                </button>
-              </div>
+            <canvas ref={canvasRef} style={{ display: 'none' }} />
+          </div>
 
-              <div className="logs-feed-container">
-                {userLogs.length === 0 ? (
-                  <p className="empty-msg">No logs logged for your account.</p>
-                ) : (
-                  <div className="logs-feed-list">
-                    {userLogs.map((log) => (
-                      <div key={log.log_id} className={`log-feed-row ${log.type.toLowerCase()}`}>
-                        <div className="log-type-indicator">
-                          {log.type === 'Entry' ? <LogIn size={14} /> : <LogOut size={14} />}
-                          <span>{log.type}</span>
-                        </div>
-                        <div className="log-user-details">
-                          <strong>{currentUser?.name}</strong>
-                          <span>{currentUser?.role}</span>
-                        </div>
-                        <div className="log-timestamp">
-                          {new Date(log.timestamp).toLocaleDateString()} {new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
+          {/* Student Log History */}
+          <div className="qr-panel gate-history">
+            <div className="panel-header">
+              <History className="header-icon text-gold" />
+              <div>
+                <h3>My Attendance History</h3>
+                <p className="subtitle">Personal check-in/out logs</p>
               </div>
+              <button className="btn-icon-refresh" onClick={loadData} title="Refresh Logs">
+                <RefreshCw size={16} />
+              </button>
+            </div>
+
+            <div className="logs-feed-container">
+              {userLogs.length === 0 ? (
+                <p className="empty-msg">No logs logged for your account.</p>
+              ) : (
+                <div className="logs-feed-list">
+                  {userLogs.map((log) => (
+                    <div key={log.log_id} className={`log-feed-row ${log.type.toLowerCase()}`}>
+                      <div className="log-type-indicator">
+                        {log.type === 'Entry' ? <LogIn size={14} /> : <LogOut size={14} />}
+                        <span>{log.type}</span>
+                      </div>
+                      <div className="log-user-details">
+                        <strong>{currentUser?.name}</strong>
+                        <span>{currentUser?.role}</span>
+                      </div>
+                      <div className="log-timestamp">
+                        {new Date(log.timestamp).toLocaleDateString()} {new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
+        </div>
       )}
     </div>
   )
