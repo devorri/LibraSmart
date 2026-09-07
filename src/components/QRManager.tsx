@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { addLibraryLog, fetchLibraryLogs } from '../lib/supabase'
+import { addLibraryLog, fetchLibraryLogs, fetchAllUsers } from '../lib/supabase'
 import type { LibraryLog, User } from '../lib/supabase'
 import { QrCode, LogIn, LogOut, History, RefreshCw, Upload, CheckCircle, Camera } from 'lucide-react'
 import { QRCodeSVG } from 'qrcode.react'
@@ -12,6 +12,8 @@ interface QRManagerProps {
 
 export function QRManager({ currentUser, onLogCreated }: QRManagerProps): React.ReactElement {
   const [logs, setLogs] = useState<LibraryLog[]>([])
+  const [allUsers, setAllUsers] = useState<User[]>([])
+  const [guestStudentId, setGuestStudentId] = useState<number | null>(null)
   const [scanType, setScanType] = useState<'Entry' | 'Exit'>('Entry')
   const [cameraActive, setCameraActive] = useState(false)
   const [cameraError, setCameraError] = useState<string | null>(null)
@@ -24,11 +26,16 @@ export function QRManager({ currentUser, onLogCreated }: QRManagerProps): React.
   const fileInputRef = useRef<HTMLInputElement | null>(null)
 
   const currentUserRef = useRef(currentUser)
+  const guestStudentIdRef = useRef(guestStudentId)
   const scanTypeRef = useRef(scanType)
 
   useEffect(() => {
     currentUserRef.current = currentUser
   }, [currentUser])
+
+  useEffect(() => {
+    guestStudentIdRef.current = guestStudentId
+  }, [guestStudentId])
 
   useEffect(() => {
     scanTypeRef.current = scanType
@@ -84,7 +91,7 @@ export function QRManager({ currentUser, onLogCreated }: QRManagerProps): React.
   const scanFrame = async () => {
     const video = videoRef.current
     const canvas = canvasRef.current
-    const targetUserId = currentUserRef.current?.user_id
+    const targetUserId = currentUserRef.current?.user_id || guestStudentIdRef.current
     const currentScanType = scanTypeRef.current
 
     if (!video || !canvas || !targetUserId) return
@@ -130,7 +137,7 @@ export function QRManager({ currentUser, onLogCreated }: QRManagerProps): React.
 
   const startCamera = async () => {
     if (!navigator.mediaDevices?.getUserMedia) {
-      setCameraError('Camera access requires HTTPS or a supported mobile browser.')
+      setCameraError('Camera access requires HTTPS or localhost browser connection on mobile. Use QR photo upload or Quick Pass below.')
       return
     }
 
@@ -142,7 +149,7 @@ export function QRManager({ currentUser, onLogCreated }: QRManagerProps): React.
       let mediaStream: MediaStream
       try {
         mediaStream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: { ideal: 'environment' } }
+          video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }
         })
       } catch {
         mediaStream = await navigator.mediaDevices.getUserMedia({ video: true })
@@ -155,19 +162,27 @@ export function QRManager({ currentUser, onLogCreated }: QRManagerProps): React.
         await videoRef.current.play()
       }
       setCameraActive(true)
-      setScanResult('Point your device at the library gate QR code.')
+      setScanResult('Point your device camera at the library entrance gate QR code.')
       scanIntervalRef.current = window.setInterval(scanFrame, 500)
-    } catch (err) {
-      setCameraError('Unable to open live camera. Grant camera permission or use the image scan / direct log option below.')
-      console.error('Camera error:', err)
+    } catch (err: unknown) {
+      const errName = (err as Error)?.name || ''
+      if (errName === 'NotAllowedError' || errName === 'PermissionDeniedError') {
+        setCameraError('Camera permission denied. Please allow camera access in browser settings or use Quick Pass below.')
+      } else {
+        setCameraError('Live camera not active. Ensure HTTPS/localhost connection or tap Quick Pass below.')
+      }
+      console.warn('Camera error:', err)
     } finally {
       setLoading(false)
     }
   }
 
   const handleDirectLog = async () => {
-    const targetUserId = currentUser?.user_id
-    if (!targetUserId) return
+    const targetUserId = currentUser?.user_id || guestStudentId
+    if (!targetUserId) {
+      setCameraError('Please select your student account first.')
+      return
+    }
     setLoading(true)
     setCameraError(null)
     setScanResult(`Logging ${scanType}...`)
@@ -223,13 +238,20 @@ export function QRManager({ currentUser, onLogCreated }: QRManagerProps): React.
     reader.readAsDataURL(file)
   }
 
-  // Load logs
+  // Load logs & users
   const loadData = async () => {
     try {
       const logsData = await fetchLibraryLogs()
       setLogs(logsData)
+      if (!currentUser) {
+        const usersData = await fetchAllUsers()
+        setAllUsers(usersData.filter(u => u.role === 'Student'))
+        if (usersData.length > 0 && !guestStudentId) {
+          setGuestStudentId(usersData[0].user_id)
+        }
+      }
     } catch (err) {
-      console.error("Error loading QR logs:", err)
+      console.error("Error loading QR data:", err)
     }
   }
 
@@ -244,7 +266,7 @@ export function QRManager({ currentUser, onLogCreated }: QRManagerProps): React.
     }
   }, [currentUser])
 
-  const userLogs = logs.filter(l => l.user_id === currentUser?.user_id)
+  const userLogs = logs.filter(l => l.user_id === (currentUser?.user_id || guestStudentId))
 
   return (
     <div className="qr-manager-section">
@@ -320,16 +342,34 @@ export function QRManager({ currentUser, onLogCreated }: QRManagerProps): React.
           </div>
         </div>
       ) : (
-        // STUDENT / TEACHER VIEW: SCANNING HANDHELD CONSOLE
+        // STUDENT / TEACHER / GUEST VIEW: SCANNING CONSOLE
         <div className="qr-student-view">
           <div className="qr-panel scan-desk">
             <div className="panel-header">
               <QrCode className="header-icon text-teal" />
               <div>
-                <h3>Student / Teacher Gate Scanner</h3>
-                <p className="subtitle">Tap Scan to record entry or exit at the library gate. Select your direction first.</p>
+                <h3>Library Entrance Gate Pass</h3>
+                <p className="subtitle">Record entry or exit pass at the library gate entrance.</p>
               </div>
             </div>
+
+            {!currentUser && (
+              <div style={{ padding: '12px 16px', background: 'rgba(15, 23, 42, 0.9)', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)', marginBottom: '12px', textAlign: 'left' }}>
+                <label style={{ fontSize: '0.82rem', color: '#cbd5e1', fontWeight: 600, display: 'block', marginBottom: '6px' }}>Select Student Account</label>
+                <select
+                  value={guestStudentId ?? ''}
+                  onChange={(e) => setGuestStudentId(Number(e.target.value) || null)}
+                  style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', background: '#0f172a', color: '#fff', border: '1px solid #0f7581' }}
+                >
+                  <option value="">-- Select Student Account --</option>
+                  {allUsers.map(s => (
+                    <option key={s.user_id} value={s.user_id}>
+                      {s.name} ({s.username}) — {s.program_strand || 'Student'}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
 
             {/* Live Camera QR Scanner */}
             <div className="viewfinder-container">
@@ -404,7 +444,7 @@ export function QRManager({ currentUser, onLogCreated }: QRManagerProps): React.
                   disabled={loading}
                   style={{ margin: 0, justifyContent: 'center' }}
                 >
-                  {cameraActive ? 'Stop Scanner' : 'Live Camera'} <Camera size={16} />
+                  {cameraActive ? 'Stop Camera' : 'Start Camera'} <Camera size={16} />
                 </button>
 
                 <button
@@ -430,7 +470,7 @@ export function QRManager({ currentUser, onLogCreated }: QRManagerProps): React.
                 type="button"
                 className="btn-secondary"
                 onClick={handleDirectLog}
-                disabled={loading}
+                disabled={loading || (!currentUser && !guestStudentId)}
                 style={{ width: '100%', marginTop: '6px', justifyContent: 'center', color: '#2dd4bf', borderColor: 'rgba(45, 212, 191, 0.3)' }}
               >
                 Quick {scanType} Pass <CheckCircle size={16} />
@@ -469,8 +509,8 @@ export function QRManager({ currentUser, onLogCreated }: QRManagerProps): React.
                         <span>{log.type}</span>
                       </div>
                       <div className="log-user-details">
-                        <strong>{currentUser?.name}</strong>
-                        <span>{currentUser?.role}</span>
+                        <strong>{log.users?.name || currentUser?.name || 'Student'}</strong>
+                        <span>{log.users?.role || 'Student'}</span>
                       </div>
                       <div className="log-timestamp">
                         {new Date(log.timestamp).toLocaleDateString()} {new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}

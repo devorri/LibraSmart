@@ -1711,6 +1711,29 @@ export default function App() {
           </div>
         )}
 
+        {/* ENTRY / EXIT GATE PASS MODAL SCREEN */}
+        {isGatePassModalOpen && (
+          <div className="test-sms-modal-overlay" onClick={() => setIsGatePassModalOpen(false)}>
+            <div className="test-sms-modal-content" style={{ maxWidth: '640px' }} onClick={(e) => e.stopPropagation()}>
+              <div className="test-sms-header" style={{ marginBottom: '12px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <QrCode size={20} style={{ color: '#2dd4bf' }} />
+                  <h3 style={{ margin: 0, fontSize: '1.1rem' }}>Library Gate Entry / Exit Scanner</h3>
+                </div>
+                <button
+                  type="button"
+                  style={{ background: 'transparent', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: '4px' }}
+                  onClick={() => setIsGatePassModalOpen(false)}
+                >
+                  ✕
+                </button>
+              </div>
+
+              <QRManager currentUser={currentUser} onLogCreated={loadDatabaseData} />
+            </div>
+          </div>
+        )}
+
         {/* DIGITIZED E-BOOK READER OVERLAY SCREEN */}
         {ebookToRead && (
           <EbookReader book={ebookToRead} onClose={() => setEbookToRead(null)} />
