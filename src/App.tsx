@@ -134,6 +134,7 @@ export default function App() {
   
   // Interaction/Simulations States
   const [query, setQuery] = useState('')
+  const [isGatePassModalOpen, setIsGatePassModalOpen] = useState(false)
   const [selectedCategory, setSelectedCategory] = useState('All')
   const [ebookToRead, setEbookToRead] = useState<Book | null>(null)
   const [externalBookResults, setExternalBookResults] = useState<ExternalBookResult[]>([])
@@ -1264,6 +1265,16 @@ export default function App() {
               <span>{isUsingMock() ? 'Offline Mode' : 'Online'}</span>
             </div>
 
+            {currentUser && (
+              <button
+                className="btn-secondary"
+                onClick={() => setIsGatePassModalOpen(true)}
+                style={{ padding: '6px 12px', fontSize: '0.82rem', color: '#2dd4bf', borderColor: 'rgba(45, 212, 191, 0.4)', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+              >
+                <QrCode size={16} /> Gate Pass
+              </button>
+            )}
+
             {currentUser ? (
               <button className="btn-primary" onClick={() => navigateToView('overview')}>
                 <Compass size={16} /> My Dashboard
@@ -1295,9 +1306,24 @@ export default function App() {
 
                       <div className="store-hero-actions">
                         <button className="btn-primary" onClick={() => setStoreTab('catalog')}>Browse catalog</button>
-                        <button className="btn-secondary" onClick={() => setShowLoginModal(true)}>
-                          Login
+                        <button
+                          className="btn-secondary"
+                          onClick={() => {
+                            if (!currentUser) {
+                              setShowLoginModal(true)
+                            } else {
+                              setIsGatePassModalOpen(true)
+                            }
+                          }}
+                          style={{ color: '#2dd4bf', borderColor: 'rgba(45, 212, 191, 0.4)', display: 'inline-flex', alignItems: 'center', gap: '8px' }}
+                        >
+                          <QrCode size={18} /> Gate Entry / Exit Pass
                         </button>
+                        {!currentUser && (
+                          <button className="btn-secondary" onClick={() => setShowLoginModal(true)}>
+                            Login
+                          </button>
+                        )}
                       </div>
                     </div>
                     
@@ -1724,9 +1750,11 @@ export default function App() {
               <Sparkles size={18} /> AI Recommendations
             </button>
           )}
-          <button className={view === 'qr' ? 'active' : ''} onClick={() => navigateToView('qr')}>
-            <QrCode size={18} /> QR Gate Pass
-          </button>
+          {(currentUser.role === 'Librarian' || currentUser.role === 'Administrator') && (
+            <button className={view === 'qr' ? 'active' : ''} onClick={() => navigateToView('qr')}>
+              <QrCode size={18} /> Stationary Gate Station
+            </button>
+          )}
           {!isStudent && (
             <>
               <button className={view === 'analytics' ? 'active' : ''} onClick={() => navigateToView('analytics')}>
@@ -1833,6 +1861,13 @@ export default function App() {
                 <div className="hero-actions">
                   <button className="btn-primary" onClick={() => navigateToView(roleFocus.primaryView)}>
                     {roleFocus.primary}
+                  </button>
+                  <button 
+                    className="btn-secondary" 
+                    onClick={() => setIsGatePassModalOpen(true)} 
+                    style={{ color: '#2dd4bf', borderColor: 'rgba(45, 212, 191, 0.4)', display: 'inline-flex', alignItems: 'center', gap: '8px' }}
+                  >
+                    <QrCode size={18} /> Entry / Exit Gate Pass
                   </button>
                   {currentUser?.role !== 'Student' && (
                     <button className="btn-secondary" onClick={() => navigateToView(roleFocus.secondaryView)}>
@@ -3444,6 +3479,29 @@ Chapter 2: Structural implementations..."
                 </div>
               </form>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* ENTRY / EXIT GATE PASS MODAL SCREEN */}
+      {isGatePassModalOpen && (
+        <div className="test-sms-modal-overlay" onClick={() => setIsGatePassModalOpen(false)}>
+          <div className="test-sms-modal-content" style={{ maxWidth: '640px' }} onClick={(e) => e.stopPropagation()}>
+            <div className="test-sms-header" style={{ marginBottom: '12px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <QrCode size={20} style={{ color: '#2dd4bf' }} />
+                <h3 style={{ margin: 0, fontSize: '1.1rem' }}>Library Gate Entry / Exit Scanner</h3>
+              </div>
+              <button
+                type="button"
+                style={{ background: 'transparent', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: '4px' }}
+                onClick={() => setIsGatePassModalOpen(false)}
+              >
+                ✕
+              </button>
+            </div>
+
+            <QRManager currentUser={currentUser} onLogCreated={loadDatabaseData} />
           </div>
         </div>
       )}

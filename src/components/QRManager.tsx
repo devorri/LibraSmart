@@ -235,6 +235,13 @@ export function QRManager({ currentUser, onLogCreated }: QRManagerProps): React.
 
   useEffect(() => {
     loadData()
+    // Auto-launch camera scanner immediately on mobile/student gate pass view
+    if (currentUser?.role !== 'Librarian' && currentUser?.role !== 'Administrator') {
+      const timer = setTimeout(() => {
+        startCamera()
+      }, 100)
+      return () => clearTimeout(timer)
+    }
   }, [currentUser])
 
   const userLogs = logs.filter(l => l.user_id === currentUser?.user_id)
