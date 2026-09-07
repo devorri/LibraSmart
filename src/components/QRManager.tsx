@@ -137,7 +137,7 @@ export function QRManager({ currentUser, onLogCreated }: QRManagerProps): React.
 
   const startCamera = async () => {
     if (!navigator.mediaDevices?.getUserMedia) {
-      setCameraError('Camera access requires HTTPS or localhost browser connection on mobile. Use QR photo upload or Quick Pass below.')
+      setCameraError('Camera access requires HTTPS or supported browser context. Use QR photo upload or Quick Pass below.')
       return
     }
 
@@ -158,18 +158,19 @@ export function QRManager({ currentUser, onLogCreated }: QRManagerProps): React.
       if (videoRef.current) {
         videoRef.current.setAttribute('playsinline', 'true')
         videoRef.current.setAttribute('muted', 'true')
+        videoRef.current.setAttribute('autoplay', 'true')
         videoRef.current.srcObject = mediaStream
-        await videoRef.current.play()
+        await videoRef.current.play().catch(e => console.warn('Video play warning:', e))
       }
       setCameraActive(true)
-      setScanResult('Point your device camera at the library entrance gate QR code.')
-      scanIntervalRef.current = window.setInterval(scanFrame, 500)
+      setScanResult('Point camera at the library gate QR code.')
+      scanIntervalRef.current = window.setInterval(scanFrame, 400)
     } catch (err: unknown) {
       const errName = (err as Error)?.name || ''
       if (errName === 'NotAllowedError' || errName === 'PermissionDeniedError') {
-        setCameraError('Camera permission denied. Please allow camera access in browser settings or use Quick Pass below.')
+        setCameraError('Camera permission denied. Grant access or use Quick Pass below.')
       } else {
-        setCameraError('Live camera not active. Ensure HTTPS/localhost connection or tap Quick Pass below.')
+        setCameraError('Live camera not active. Ensure HTTPS connection or tap Quick Pass below.')
       }
       console.warn('Camera error:', err)
     } finally {
@@ -266,10 +267,10 @@ export function QRManager({ currentUser, onLogCreated }: QRManagerProps): React.
     }
   }, [currentUser])
 
-  const userLogs = logs.filter(l => l.user_id === (currentUser?.user_id || guestStudentId))
+  const isElevatedUser = currentUser?.role === 'Librarian' || currentUser?.role === 'Administrator';
 
   return (
-    <div className="qr-manager-section">
+    <div className="qr-manager-section" style={{ width: '100%', maxWidth: isElevatedUser ? '1200px' : '460px', margin: '0 auto' }}>
       {currentUser?.role === 'Librarian' || currentUser?.role === 'Administrator' ? (
         // LIBRARIAN / ADMIN VIEW: STATIONARY GATE QR DISPLAY STATION
         <div className="qr-grid">
@@ -342,185 +343,138 @@ export function QRManager({ currentUser, onLogCreated }: QRManagerProps): React.
           </div>
         </div>
       ) : (
-        // STUDENT / TEACHER / GUEST VIEW: SCANNING CONSOLE
-        <div className="qr-student-view">
-          <div className="qr-panel scan-desk">
-            <div className="panel-header">
-              <QrCode className="header-icon text-teal" />
-              <div>
-                <h3>Library Entrance Gate Pass</h3>
-                <p className="subtitle">Record entry or exit pass at the library gate entrance.</p>
-              </div>
+        // CLEAN, PURE, UNCLUTTERED STUDENT / MOBILE SCANNER CONSOLE
+        <div className="qr-panel scan-desk" style={{ padding: '16px' }}>
+          {!currentUser && (
+            <div style={{ padding: '10px 14px', background: 'rgba(15, 23, 42, 0.95)', borderRadius: '8px', border: '1px solid #0f7581', marginBottom: '14px', textAlign: 'left' }}>
+              <label style={{ fontSize: '0.8rem', color: '#cbd5e1', fontWeight: 600, display: 'block', marginBottom: '4px' }}>Select Student Account</label>
+              <select
+                value={guestStudentId ?? ''}
+                onChange={(e) => setGuestStudentId(Number(e.target.value) || null)}
+                style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', background: '#0f172a', color: '#fff', border: '1px solid #0f7581', fontSize: '0.85rem' }}
+              >
+                <option value="">-- Choose Student --</option>
+                {allUsers.map(s => (
+                  <option key={s.user_id} value={s.user_id}>
+                    {s.name} ({s.username}) — {s.program_strand || 'Student'}
+                  </option>
+                ))}
+              </select>
             </div>
+          )}
 
-            {!currentUser && (
-              <div style={{ padding: '12px 16px', background: 'rgba(15, 23, 42, 0.9)', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)', marginBottom: '12px', textAlign: 'left' }}>
-                <label style={{ fontSize: '0.82rem', color: '#cbd5e1', fontWeight: 600, display: 'block', marginBottom: '6px' }}>Select Student Account</label>
-                <select
-                  value={guestStudentId ?? ''}
-                  onChange={(e) => setGuestStudentId(Number(e.target.value) || null)}
-                  style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', background: '#0f172a', color: '#fff', border: '1px solid #0f7581' }}
-                >
-                  <option value="">-- Select Student Account --</option>
-                  {allUsers.map(s => (
-                    <option key={s.user_id} value={s.user_id}>
-                      {s.name} ({s.username}) — {s.program_strand || 'Student'}
-                    </option>
-                  ))}
-                </select>
+          {/* Direction Toggle */}
+          <div className="scan-type-toggle" style={{ marginBottom: '14px' }}>
+            <button
+              type="button"
+              className={`toggle-btn btn-entry ${scanType === 'Entry' ? 'active' : ''}`}
+              onClick={() => setScanType('Entry')}
+              disabled={loading}
+              style={{ fontSize: '0.95rem', padding: '10px' }}
+            >
+              <LogIn size={18} /> Entry Gate
+            </button>
+            <button
+              type="button"
+              className={`toggle-btn btn-exit ${scanType === 'Exit' ? 'active' : ''}`}
+              onClick={() => setScanType('Exit')}
+              disabled={loading}
+              style={{ fontSize: '0.95rem', padding: '10px' }}
+            >
+              <LogOut size={18} /> Exit Gate
+            </button>
+          </div>
+
+          {/* Live Camera Viewfinder Box */}
+          <div className="viewfinder-container">
+            <div className={`viewfinder-screen ${cameraActive ? 'camera-active' : ''}`} style={{ background: '#09131d', borderRadius: '12px' }}>
+              <div className="viewfinder-borders">
+                <div className="border-tl"></div>
+                <div className="border-tr"></div>
+                <div className="border-bl"></div>
+                <div className="border-br"></div>
               </div>
-            )}
 
-            {/* Live Camera QR Scanner */}
-            <div className="viewfinder-container">
-              <div className={`viewfinder-screen ${cameraActive ? 'camera-active' : ''}`}>
-                <div className="viewfinder-borders">
-                  <div className="border-tl"></div>
-                  <div className="border-tr"></div>
-                  <div className="border-bl"></div>
-                  <div className="border-br"></div>
-                </div>
+              {cameraActive ? (
+                <video
+                  ref={videoRef}
+                  className="scanner-video"
+                  autoPlay
+                  muted
+                  playsInline
+                  style={{ width: '100%', height: '100%', objectFit: 'cover', background: '#000000' }}
+                />
+              ) : (
+                <QRCodeSVG
+                  value="MPCI-LIBRARY-GATE"
+                  size={140}
+                  bgColor="transparent"
+                  fgColor="#0f7581"
+                  level="Q"
+                  className="qr-svg-placeholder"
+                />
+              )}
 
-                {cameraActive ? (
-                  <video
-                    ref={videoRef}
-                    className="scanner-video"
-                    muted
-                    playsInline
-                  />
+              {cameraActive && <div className="scanner-laser"></div>}
+
+              <div className="scanner-status-overlay" style={{ bottom: '12px', left: '10px', right: '10px' }}>
+                {cameraError ? (
+                  <span className="status-badge error" style={{ fontSize: '0.78rem' }}>{cameraError}</span>
+                ) : cameraActive ? (
+                  <span className="pulse-text" style={{ fontSize: '0.82rem' }}>{scanResult || 'Point camera at library gate QR...'}</span>
+                ) : scanResult ? (
+                  <span className="status-badge-result success" style={{ fontSize: '0.82rem' }}>{scanResult}</span>
                 ) : (
-                  <QRCodeSVG
-                    value="MPCI-LIBRARY-GATE"
-                    size={130}
-                    bgColor="transparent"
-                    fgColor="#0f7581"
-                    level="Q"
-                    className="qr-svg-placeholder"
-                  />
+                  <span className="pulse-text-slow" style={{ fontSize: '0.82rem' }}>Point camera at the gate QR</span>
                 )}
-
-                {cameraActive && <div className="scanner-laser"></div>}
-
-                <div className="scanner-status-overlay">
-                  {cameraError ? (
-                    <span className="status-badge error">{cameraError}</span>
-                  ) : cameraActive ? (
-                    <span className="pulse-text">{scanResult || 'Scanning for library gate QR...'}</span>
-                  ) : scanResult ? (
-                    <span className="status-badge-result success">{scanResult}</span>
-                  ) : (
-                    <span className="pulse-text-slow">Open camera or select photo to log gate pass</span>
-                  )}
-                </div>
               </div>
             </div>
+          </div>
 
-            {/* Scan controller */}
-            <form onSubmit={(e) => e.preventDefault()} className="scan-control-form">
-              <div className="scan-type-toggle">
-                <button
-                  type="button"
-                  className={`toggle-btn btn-entry ${scanType === 'Entry' ? 'active' : ''}`}
-                  onClick={() => setScanType('Entry')}
-                  disabled={loading}
-                >
-                  <LogIn size={16} /> Entry Gate
-                </button>
-                <button
-                  type="button"
-                  className={`toggle-btn btn-exit ${scanType === 'Exit' ? 'active' : ''}`}
-                  onClick={() => setScanType('Exit')}
-                  disabled={loading}
-                >
-                  <LogOut size={16} /> Exit Gate
-                </button>
-              </div>
-
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', width: '100%' }}>
-                <button
-                  type="button"
-                  className="btn-primary scan-submit-btn"
-                  onClick={cameraActive ? stopCamera : startCamera}
-                  disabled={loading}
-                  style={{ margin: 0, justifyContent: 'center' }}
-                >
-                  {cameraActive ? 'Stop Camera' : 'Start Camera'} <Camera size={16} />
-                </button>
-
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={loading}
-                  style={{ margin: 0, justifyContent: 'center', background: 'var(--color-surface-soft)', border: '1px solid var(--color-border)' }}
-                >
-                  Upload QR Photo <Upload size={16} />
-                </button>
-              </div>
-
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                onChange={handleFileUpload}
-                style={{ display: 'none' }}
-              />
+          {/* Action Buttons */}
+          <div style={{ marginTop: '14px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={cameraActive ? stopCamera : startCamera}
+                disabled={loading}
+                style={{ margin: 0, justifyContent: 'center', fontSize: '0.88rem' }}
+              >
+                {cameraActive ? 'Stop Camera' : 'Start Camera'} <Camera size={16} />
+              </button>
 
               <button
                 type="button"
                 className="btn-secondary"
-                onClick={handleDirectLog}
-                disabled={loading || (!currentUser && !guestStudentId)}
-                style={{ width: '100%', marginTop: '6px', justifyContent: 'center', color: '#2dd4bf', borderColor: 'rgba(45, 212, 191, 0.3)' }}
+                onClick={() => fileInputRef.current?.click()}
+                disabled={loading}
+                style={{ margin: 0, justifyContent: 'center', background: 'var(--color-surface-soft)', border: '1px solid var(--color-border)', fontSize: '0.88rem' }}
               >
-                Quick {scanType} Pass <CheckCircle size={16} />
-              </button>
-            </form>
-
-            <div className="scan-help-note">
-              <p>Open live camera scanner, upload a QR photo, or tap Quick Pass to log your {scanType}.</p>
-            </div>
-
-            <canvas ref={canvasRef} style={{ display: 'none' }} />
-          </div>
-
-          {/* Student Log History */}
-          <div className="qr-panel gate-history">
-            <div className="panel-header">
-              <History className="header-icon text-gold" />
-              <div>
-                <h3>My Attendance History</h3>
-                <p className="subtitle">Personal check-in/out logs</p>
-              </div>
-              <button className="btn-icon-refresh" onClick={loadData} title="Refresh Logs">
-                <RefreshCw size={16} />
+                Upload QR Photo <Upload size={16} />
               </button>
             </div>
 
-            <div className="logs-feed-container">
-              {userLogs.length === 0 ? (
-                <p className="empty-msg">No logs logged for your account.</p>
-              ) : (
-                <div className="logs-feed-list">
-                  {userLogs.map((log) => (
-                    <div key={log.log_id} className={`log-feed-row ${log.type.toLowerCase()}`}>
-                      <div className="log-type-indicator">
-                        {log.type === 'Entry' ? <LogIn size={14} /> : <LogOut size={14} />}
-                        <span>{log.type}</span>
-                      </div>
-                      <div className="log-user-details">
-                        <strong>{log.users?.name || currentUser?.name || 'Student'}</strong>
-                        <span>{log.users?.role || 'Student'}</span>
-                      </div>
-                      <div className="log-timestamp">
-                        {new Date(log.timestamp).toLocaleDateString()} {new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              onChange={handleFileUpload}
+              style={{ display: 'none' }}
+            />
+
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={handleDirectLog}
+              disabled={loading || (!currentUser && !guestStudentId)}
+              style={{ width: '100%', justifyContent: 'center', color: '#2dd4bf', borderColor: 'rgba(45, 212, 191, 0.4)', padding: '10px', fontSize: '0.88rem' }}
+            >
+              Quick {scanType} Pass <CheckCircle size={16} />
+            </button>
           </div>
+
+          <canvas ref={canvasRef} style={{ display: 'none' }} />
         </div>
       )}
     </div>
