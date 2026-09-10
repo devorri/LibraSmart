@@ -148,7 +148,7 @@ export default function App() {
   const [newBookAuthor, setNewBookAuthor] = useState('')
   const [newBookIsbn, setNewBookIsbn] = useState('')
   const [newBookCategory, setNewBookCategory] = useState('Information Technology')
-  const [newBookRelevance, setNewBookRelevance] = useState('ICT')
+  const [newBookRelevance, setNewBookRelevance] = useState('Grade 7')
   const [newBookStatus, setNewBookStatus] = useState<'Available' | 'E-book'>('Available')
   const [newBookContent, setNewBookContent] = useState('')
   const [newBookCoverUrl, setNewBookCoverUrl] = useState('')   // existing URL (for edit mode)
@@ -413,7 +413,7 @@ export default function App() {
     setNewBookAuthor('')
     setNewBookIsbn('')
     setNewBookCategory('Information Technology')
-    setNewBookRelevance('BSIT')
+    setNewBookRelevance('Grade 7')
     setNewBookStatus('Available')
     setNewBookContent('')
     setNewBookCoverUrl('')
@@ -844,9 +844,10 @@ export default function App() {
   const aiRecommendations = useMemo(() => {
     if (!currentUser || books.length === 0) return []
 
-    const userProgram = currentUser.program_strand || 'BSIT'
+    const userProgram = currentUser.program_strand || currentUser.academic_level || 'General'
     const strandMatched = books.filter(
-      (b) => b.program_strand_relevance?.toLowerCase() === userProgram.toLowerCase()
+      (b) => b.program_strand_relevance?.toLowerCase() === userProgram.toLowerCase() ||
+             (currentUser.academic_level && b.program_strand_relevance?.toLowerCase() === currentUser.academic_level.toLowerCase())
     )
 
     const categoryPopularity: Record<string, number> = {}
@@ -1308,13 +1309,7 @@ export default function App() {
                         <button className="btn-primary" onClick={() => setStoreTab('catalog')}>Browse catalog</button>
                         <button
                           className="btn-secondary"
-                          onClick={() => {
-                            if (!currentUser) {
-                              setShowLoginModal(true)
-                            } else {
-                              setIsGatePassModalOpen(true)
-                            }
-                          }}
+                          onClick={() => setIsGatePassModalOpen(true)}
                           style={{ color: '#2dd4bf', borderColor: 'rgba(45, 212, 191, 0.4)', display: 'inline-flex', alignItems: 'center', gap: '8px' }}
                         >
                           <QrCode size={18} /> Gate Entry / Exit Pass
@@ -1451,7 +1446,7 @@ export default function App() {
                       type="text" 
                       value={query}
                       onChange={(e) => setQuery(e.target.value)}
-                      placeholder="Search by title, author, ISBN, subject, strand..." 
+                      placeholder="Search by title, author, ISBN, subject, year level..." 
                     />
                   </div>
 
@@ -2238,7 +2233,7 @@ export default function App() {
                 <Search size={18} />
                 <input 
                   type="text" 
-                  placeholder="Search books by title, author, category, or strand..." 
+                  placeholder="Search books by title, author, category, or year level..." 
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                 />
@@ -2253,7 +2248,7 @@ export default function App() {
                     <th>Author</th>
                     <th>ISBN Code</th>
                     <th>Category</th>
-                    <th>Academic Strand</th>
+                    <th>Year Level</th>
                     <th>Copies</th>
                     <th>Availability Status</th>
                     <th>Shelf Actions</th>
@@ -3240,35 +3235,61 @@ export default function App() {
 
               <div className="form-row-2">
                 <div className="form-group">
-                  <label htmlFor="b-cat">Category</label>
-                  <select 
-                    id="b-cat" 
-                    value={newBookCategory} 
+                  <label htmlFor="b-cat">Category (Type or Select)</label>
+                  <input
+                    id="b-cat"
+                    type="text"
+                    list="category-suggestions"
+                    value={newBookCategory}
                     onChange={(e) => setNewBookCategory(e.target.value)}
-                  >
-                    <option value="Information Technology">Information Technology</option>
-                    <option value="Research">Research</option>
-                    <option value="Library Science">Library Science</option>
-                    <option value="Database">Database Management</option>
-                    <option value="Accounting">Accounting & Finance</option>
-                    <option value="Networking">Networking (CCNA)</option>
-                  </select>
+                    placeholder="e.g. Science, Math, Information Technology..."
+                    required
+                  />
+                  <datalist id="category-suggestions">
+                    <option value="Information Technology" />
+                    <option value="Research" />
+                    <option value="Library Science" />
+                    <option value="Database Management" />
+                    <option value="Accounting & Finance" />
+                    <option value="Networking (CCNA)" />
+                    <option value="Science" />
+                    <option value="Mathematics" />
+                    <option value="English & Literature" />
+                    <option value="Filipino" />
+                    <option value="Araling Panlipunan" />
+                    <option value="TLE / MAPEH" />
+                    {Array.from(new Set(books.map(b => b.category))).map(cat => (
+                      <option key={cat} value={cat} />
+                    ))}
+                  </datalist>
                 </div>
 
                 <div className="form-group">
-                  <label htmlFor="b-relevance">Strand Relevance</label>
+                  <label htmlFor="b-relevance">Year Level Relevance</label>
                   <select 
                     id="b-relevance" 
                     value={newBookRelevance} 
                     onChange={(e) => setNewBookRelevance(e.target.value)}
                   >
-                    <option value="BSIT">BSIT / IT</option>
-                    <option value="ICT">ICT</option>
-                    <option value="SMAW">SMAW</option>
-                    <option value="Automotive">Automotive</option>
-                    <option value="HUMSS">HUMSS</option>
-                    <option value="Healthcare">Healthcare</option>
-                    <option value="General">General / All Strands</option>
+                    <optgroup label="Junior High School">
+                      <option value="Grade 7">Grade 7</option>
+                      <option value="Grade 8">Grade 8</option>
+                      <option value="Grade 9">Grade 9</option>
+                      <option value="Grade 10">Grade 10</option>
+                    </optgroup>
+                    <optgroup label="Senior High School">
+                      <option value="Grade 11">Grade 11</option>
+                      <option value="Grade 12">Grade 12</option>
+                    </optgroup>
+                    <optgroup label="College">
+                      <option value="1st Year">1st Year</option>
+                      <option value="2nd Year">2nd Year</option>
+                      <option value="3rd Year">3rd Year</option>
+                      <option value="4th Year">4th Year</option>
+                    </optgroup>
+                    <optgroup label="General">
+                      <option value="General">General / All Levels</option>
+                    </optgroup>
                   </select>
                 </div>
               </div>

@@ -212,7 +212,7 @@ export function QRManager({ currentUser, onLogCreated }: QRManagerProps): React.
   const handleDirectLog = async () => {
     const targetUserId = currentUser?.user_id || guestStudentId
     if (!targetUserId) {
-      setCameraError('Please select your student account first.')
+      setCameraError('Please select your user account (Student or Teacher) first.')
       return
     }
     setLoading(true)
@@ -277,7 +277,7 @@ export function QRManager({ currentUser, onLogCreated }: QRManagerProps): React.
       setLogs(logsData)
       if (!currentUser) {
         const usersData = await fetchAllUsers()
-        setAllUsers(usersData.filter(u => u.role === 'Student'))
+        setAllUsers(usersData.filter(u => u.role === 'Student' || u.role === 'Teacher'))
         if (usersData.length > 0 && !guestStudentId) {
           setGuestStudentId(usersData[0].user_id)
         }
@@ -378,16 +378,16 @@ export function QRManager({ currentUser, onLogCreated }: QRManagerProps): React.
         <div className="qr-panel scan-desk" style={{ padding: '16px' }}>
           {!currentUser && (
             <div style={{ padding: '10px 14px', background: 'rgba(15, 23, 42, 0.95)', borderRadius: '8px', border: '1px solid #0f7581', marginBottom: '14px', textAlign: 'left' }}>
-              <label style={{ fontSize: '0.8rem', color: '#cbd5e1', fontWeight: 600, display: 'block', marginBottom: '4px' }}>Select Student Account</label>
+              <label style={{ fontSize: '0.8rem', color: '#cbd5e1', fontWeight: 600, display: 'block', marginBottom: '4px' }}>Select Student or Teacher Account</label>
               <select
                 value={guestStudentId ?? ''}
                 onChange={(e) => setGuestStudentId(Number(e.target.value) || null)}
                 style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', background: '#0f172a', color: '#fff', border: '1px solid #0f7581', fontSize: '0.85rem' }}
               >
-                <option value="">-- Choose Student --</option>
+                <option value="">-- Choose Student or Teacher --</option>
                 {allUsers.map(s => (
                   <option key={s.user_id} value={s.user_id}>
-                    {s.name} ({s.username}) — {s.program_strand || 'Student'}
+                    {s.name} (@{s.username}) — [{s.role}] {s.program_strand || 'General'}
                   </option>
                 ))}
               </select>
