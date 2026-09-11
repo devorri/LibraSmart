@@ -1,7 +1,7 @@
 import React, { useState } from 'react'
 import { authenticateUser, registerUser, queueNotification, sendSMSViaSemaphore } from '../lib/supabase'
 import type { User } from '../lib/supabase'
-import { UserCheck, Lock, User as UserIcon, Phone, BookOpen, GraduationCap, Eye, EyeOff, ShieldCheck, RefreshCcw, Smartphone, Send, MessageSquare, X } from 'lucide-react'
+import { UserCheck, Lock, User as UserIcon, Phone, BookOpen, GraduationCap, Eye, EyeOff, ShieldCheck, RefreshCcw } from 'lucide-react'
 
 interface LoginProps {
   onLoginSuccess: (user: User) => void
@@ -23,13 +23,6 @@ export function Login({ onLoginSuccess }: LoginProps) {
   const [successMsg, setSuccessMsg] = useState('')
   const [loading, setLoading] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
-
-  // Test SMS Modal State
-  const [showTestSmsModal, setShowTestSmsModal] = useState(false)
-  const [testPhone, setTestPhone] = useState('')
-  const [testMessage, setTestMessage] = useState('This is LibraSmart')
-  const [testSmsLoading, setTestSmsLoading] = useState(false)
-  const [testSmsStatus, setTestSmsStatus] = useState<{ type: 'error' | 'success'; text: string } | null>(null)
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -134,52 +127,6 @@ export function Login({ onLoginSuccess }: LoginProps) {
       console.error(err)
     } finally {
       setLoading(false)
-    }
-  }
-
-  const handleSendTestSms = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setTestSmsStatus(null)
-
-    if (!testPhone.trim()) {
-      setTestSmsStatus({ type: 'error', text: 'Please enter a mobile phone number.' })
-      return
-    }
-
-    setTestSmsLoading(true)
-
-    let formattedPhone = testPhone.trim()
-    if (formattedPhone.startsWith('09')) {
-      formattedPhone = '+63' + formattedPhone.slice(1)
-    } else if (!formattedPhone.startsWith('+')) {
-      formattedPhone = '+63' + formattedPhone
-    }
-
-    const textToSend = testMessage.trim() || 'This is LibraSmart'
-
-    try {
-      const success = await sendSMSViaSemaphore(formattedPhone, textToSend)
-      await queueNotification(0, formattedPhone, textToSend, 'Transaction')
-
-      if (success) {
-        setTestSmsStatus({
-          type: 'success',
-          text: `Test SMS successfully sent to ${formattedPhone} via Semaphore (Sender: TranslertPH)!`
-        })
-      } else {
-        setTestSmsStatus({
-          type: 'error',
-          text: 'Failed to send SMS. Please verify network connection or mobile number.'
-        })
-      }
-    } catch (err: any) {
-      console.error('Test SMS error:', err)
-      setTestSmsStatus({
-        type: 'error',
-        text: err?.message || 'Error sending test SMS.'
-      })
-    } finally {
-      setTestSmsLoading(false)
     }
   }
 
@@ -430,85 +377,6 @@ export function Login({ onLoginSuccess }: LoginProps) {
           </form>
         )}
 
-        <button
-          type="button"
-          className="btn-test-sms-landing"
-          onClick={() => {
-            setShowTestSmsModal(true)
-            setTestSmsStatus(null)
-          }}
-        >
-          <Smartphone size={16} /> Test Real SMS Gateway
-        </button>
-
-        {showTestSmsModal && (
-          <div className="test-sms-modal-overlay" onClick={() => setShowTestSmsModal(false)}>
-            <div className="test-sms-modal-content" onClick={(e) => e.stopPropagation()}>
-              <div className="test-sms-header">
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <Smartphone size={20} style={{ color: '#2dd4bf' }} />
-                  <h3 style={{ margin: 0, fontSize: '1.1rem' }}>Test Real SMS Gateway</h3>
-                </div>
-                <button
-                  type="button"
-                  style={{ background: 'transparent', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: '4px' }}
-                  onClick={() => setShowTestSmsModal(false)}
-                >
-                  <X size={18} />
-                </button>
-              </div>
-
-              <p className="test-sms-subtitle">
-                Enter your mobile phone number below to send a live SMS message via Semaphore Gateway (Sender: <strong>TranslertPH</strong>).
-              </p>
-
-              {testSmsStatus && (
-                <div className={`login-alert ${testSmsStatus.type}`} style={{ marginBottom: '14px' }}>
-                  {testSmsStatus.text}
-                </div>
-              )}
-
-              <form onSubmit={handleSendTestSms} className="test-sms-form">
-                <div className="form-group" style={{ marginBottom: '12px' }}>
-                  <label htmlFor="test-phone">
-                    <Phone size={15} /> Mobile Phone Number
-                  </label>
-                  <input
-                    id="test-phone"
-                    type="text"
-                    value={testPhone}
-                    onChange={(e) => setTestPhone(e.target.value)}
-                    placeholder="e.g. 09123456789 or +639123456789"
-                    required
-                  />
-                </div>
-
-                <div className="form-group" style={{ marginBottom: '16px' }}>
-                  <label htmlFor="test-msg">
-                    <MessageSquare size={15} /> SMS Message Text
-                  </label>
-                  <textarea
-                    id="test-msg"
-                    rows={3}
-                    value={testMessage}
-                    onChange={(e) => setTestMessage(e.target.value)}
-                    placeholder="This is LibraSmart"
-                    required
-                  />
-                </div>
-
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
-                  <button type="button" className="btn-secondary" onClick={() => setShowTestSmsModal(false)}>
-                    Close
-                  </button>
-                  <button type="submit" className="btn-primary" disabled={testSmsLoading}>
-                    {testSmsLoading ? 'Sending SMS...' : 'Send Test SMS'} <Send size={16} />
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div>
-        )}
       </div>
     </div>
   )

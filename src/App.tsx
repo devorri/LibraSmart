@@ -1,4 +1,6 @@
-import { useState, useEffect, useMemo, useRef } from 'react'
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
+import { jsPDF } from 'jspdf'
+import autoTable from 'jspdf-autotable'
 import { Login } from './components/Login'
 import { EbookReader } from './components/EbookReader'
 import { QRManager } from './components/QRManager'
@@ -58,10 +60,12 @@ import {
   RotateCcw,
   ShieldCheck,
   KeyRound,
-  RefreshCw
+  RefreshCw,
+  Settings,
+  SlidersHorizontal
 } from 'lucide-react'
 
-type View = 'overview' | 'catalog' | 'ai' | 'analytics' | 'reports' | 'qr' | 'users' | 'storefront' | 'trash'
+type View = 'overview' | 'catalog' | 'ai' | 'analytics' | 'reports' | 'qr' | 'users' | 'storefront' | 'trash' | 'control'
 
 type ExternalBookResult = {
   key: string
@@ -136,6 +140,10 @@ export default function App() {
   const [query, setQuery] = useState('')
   const [isGatePassModalOpen, setIsGatePassModalOpen] = useState(false)
   const [selectedCategory, setSelectedCategory] = useState('All')
+  const [catalogRelevance, setCatalogRelevance] = useState('All')
+  const [catalogAvailability, setCatalogAvailability] = useState('All')
+  const [catalogSort, setCatalogSort] = useState('title-asc')
+  const [isCatalogFilterOpen, setIsCatalogFilterOpen] = useState(false)
   const [ebookToRead, setEbookToRead] = useState<Book | null>(null)
   const [externalBookResults, setExternalBookResults] = useState<ExternalBookResult[]>([])
   const [externalSearchQuery, setExternalSearchQuery] = useState('')
@@ -194,17 +202,17 @@ export default function App() {
     setView(resolvedView)
   }
 
-  const loadTrashData = async () => {
+  const loadTrashData = useCallback(async () => {
     try {
       const trash = await fetchTrash()
       setTrashRecords(trash)
     } catch (err) {
       console.error('Error loading trash records:', err)
     }
-  }
+  }, [])
 
   // Load all books & transactions from Supabase
-  const loadDatabaseData = async () => {
+  const loadDatabaseData = useCallback(async () => {
     try {
       const booksData = await fetchBooks()
       setBooks(booksData)
@@ -212,40 +220,44 @@ export default function App() {
       setTransactions(txsData)
       const usersData = await fetchAllUsers()
       setUsers(usersData)
-      loadTrashData()
+      await loadTrashData()
     } catch (err) {
       console.error('Error loading library database:', err)
     }
-  }
+  }, [loadTrashData])
 
   // Load data immediately on mount
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    loadDatabaseData()
-  }, [])
+    const dataLoadTimer = window.setTimeout(() => {
+      void loadDatabaseData()
+    }, 0)
+    return () => window.clearTimeout(dataLoadTimer)
+  }, [loadDatabaseData])
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     const viewParam = params.get('view') as View | null
-    const validViews: View[] = ['overview', 'catalog', 'ai', 'analytics', 'reports', 'qr', 'users', 'storefront', 'trash']
+    const validViews: View[] = ['overview', 'catalog', 'ai', 'analytics', 'reports', 'qr', 'users', 'storefront', 'trash', 'control']
     const initialView = viewParam && validViews.includes(viewParam) ? viewParam : 'storefront'
     const initialStoreTab = params.get('tab') === 'catalog' ? 'catalog' : 'home'
     const initialBookId = params.get('book')
 
-    if (viewParam && validViews.includes(viewParam)) {
-      setView(isStudent && restrictedStudentViews.includes(initialView) ? 'overview' : initialView)
-    }
-
-    if (params.get('tab') === 'catalog' || params.get('tab') === 'home') {
-      setStoreTab(initialStoreTab)
-    }
-
-    if (initialBookId) {
-      const matchingBook = books.find((book) => String(book.book_id) === initialBookId)
-      if (matchingBook) {
-        setEbookToRead(matchingBook)
+    const initialStateTimer = window.setTimeout(() => {
+      if (viewParam && validViews.includes(viewParam)) {
+        setView(isStudent && restrictedStudentViews.includes(initialView) ? 'overview' : initialView)
       }
-    }
+
+      if (params.get('tab') === 'catalog' || params.get('tab') === 'home') {
+        setStoreTab(initialStoreTab)
+      }
+
+      if (initialBookId) {
+        const matchingBook = books.find((book) => String(book.book_id) === initialBookId)
+        if (matchingBook) {
+          setEbookToRead(matchingBook)
+        }
+      }
+    }, 0)
 
     if (!params.toString()) {
       window.history.replaceState(
@@ -254,6 +266,7 @@ export default function App() {
         buildHistoryUrl('storefront', 'home', null, false)
       )
     }
+    return () => window.clearTimeout(initialStateTimer)
   }, [books, isStudent])
 
   useEffect(() => {
@@ -271,7 +284,7 @@ export default function App() {
     const handlePopState = () => {
       const params = new URLSearchParams(window.location.search)
       const viewParam = params.get('view') as View | null
-      const validViews: View[] = ['overview', 'catalog', 'ai', 'analytics', 'reports', 'qr', 'users', 'storefront']
+    const validViews: View[] = ['overview', 'catalog', 'ai', 'analytics', 'reports', 'qr', 'users', 'storefront', 'trash', 'control']
       const nextView = viewParam && validViews.includes(viewParam) ? viewParam : 'storefront'
       const nextStoreTab = params.get('tab') === 'catalog' ? 'catalog' : 'home'
       const nextBookId = params.get('book')
@@ -906,6 +919,33 @@ export default function App() {
     })
   }, [books, query, selectedCategory])
 
+  const catalogBooks = useMemo(() => {
+    const [sortField, sortDirection] = catalogSort.split('-')
+    const direction = sortDirection === 'desc' ? -1 : 1
+
+    return filteredBooks
+      .filter((book) => catalogRelevance === 'All' || (book.program_strand_relevance || 'General') === catalogRelevance)
+      .filter((book) => catalogAvailability === 'All' || book.status === catalogAvailability)
+      .slice()
+      .sort((a, b) => {
+        if (sortField === 'copies') {
+          return ((a.available_copies ?? 0) - (b.available_copies ?? 0)) * direction
+        }
+        if (sortField === 'year') {
+          return (a.program_strand_relevance || 'General').localeCompare(b.program_strand_relevance || 'General') * direction
+        }
+        const values: Record<string, [string, string]> = {
+          title: [a.title, b.title],
+          author: [a.author, b.author],
+          isbn: [a.isbn, b.isbn],
+          category: [a.category, b.category],
+          status: [a.status, b.status]
+        }
+        const [left, right] = values[sortField] || values.title
+        return left.localeCompare(right, undefined, { sensitivity: 'base' }) * direction
+      })
+  }, [filteredBooks, catalogAvailability, catalogRelevance, catalogSort])
+
   const externalSearchLinks = useMemo(() => {
     const term = query.trim()
     if (!term) return []
@@ -1158,23 +1198,26 @@ export default function App() {
   }, [currentUser])
 
   // -------------------------------------------------------------
-  // EXPORTABLE REPORTS (CSV Generator)
+  // EXPORTABLE REPORTS (PDF Generator)
   // -------------------------------------------------------------
-  const handleExportCSV = (reportType: 'books' | 'transactions' | 'overdue' | 'users') => {
+  const handleExportPDF = (reportType: 'books' | 'transactions' | 'overdue' | 'users') => {
     let headers: string[] = []
     let rows: string[][] = []
-    const filename = `MPCI_Library_${reportType}_Report.csv`
+    const filename = `MPCI_Library_${reportType}_Report.pdf`
+    const reportTitles = {
+      books: 'LIST OF BOOKS',
+      transactions: 'BORROWED BOOKS AND TRANSACTIONS',
+      overdue: 'OVERDUE BOOKS AND SMS FOLLOW-UP',
+      users: 'USER ACTIVITY DIRECTORY'
+    }
 
     if (reportType === 'books') {
-      headers = ['Book ID', 'Title', 'Author', 'ISBN', 'Category', 'Relevance', 'Status']
+      // Matches the supplied inventory template. Copyright date is intentionally excluded.
+      headers = ['TITLE', 'AUTHOR/S', 'COPIES']
       rows = books.map(b => [
-        b.book_id.toString(),
         b.title,
         b.author,
-        b.isbn,
-        b.category,
-        b.program_strand_relevance || 'General',
-        b.status
+        b.status === 'E-book' ? 'Digital' : `${b.available_copies ?? 0} / ${b.total_copies ?? 1}`
       ])
     } else if (reportType === 'transactions') {
       headers = ['Transaction ID', 'Student', 'Book Title', 'Borrow Date', 'Due Date', 'Return Date', 'Status']
@@ -1216,17 +1259,77 @@ export default function App() {
         ])
     }
 
-    const csvContent =
-      'data:text/csv;charset=utf-8,' +
-      [headers.join(','), ...rows.map(e => e.map(val => `"${val.replace(/"/g, '""')}"`).join(','))].join('\n')
-      
-    const encodedUri = encodeURI(csvContent)
-    const link = document.createElement('a')
-    link.setAttribute('href', encodedUri)
-    link.setAttribute('download', filename)
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
+    const pdf = new jsPDF({
+      orientation: reportType === 'books' ? 'portrait' : 'landscape',
+      unit: 'mm',
+      format: 'a4'
+    })
+    const pageWidth = pdf.internal.pageSize.getWidth()
+
+    pdf.setFont('helvetica', 'bold')
+    pdf.setFontSize(13)
+    pdf.text('MATALAM POLYTECHNIC COLLEGE INC.', pageWidth / 2, 14, { align: 'center' })
+    pdf.setFont('helvetica', 'normal')
+    pdf.setFontSize(9)
+    pdf.text('National Highway, Matalam, Cotabato', pageWidth / 2, 19, { align: 'center' })
+    pdf.text('SCHOOL ID: 467549', pageWidth / 2, 23, { align: 'center' })
+    pdf.text('matalampolyac@gmail.com', pageWidth / 2, 27, { align: 'center' })
+    pdf.setFont('helvetica', 'bold')
+    pdf.setFontSize(12)
+    pdf.text(reportTitles[reportType], pageWidth / 2, 36, { align: 'center' })
+
+    if (reportType === 'books') {
+      const booksByCategory = books.reduce<Record<string, Book[]>>((groups, book) => {
+        const category = book.category || 'UNCATEGORIZED'
+        groups[category] = [...(groups[category] || []), book]
+        return groups
+      }, {})
+      let tableY = 42
+      Object.entries(booksByCategory).sort(([a], [b]) => a.localeCompare(b)).forEach(([category, categoryBooks]) => {
+        if (tableY > 255) {
+          pdf.addPage()
+          tableY = 18
+        }
+        pdf.setFont('helvetica', 'bold')
+        pdf.setFontSize(10)
+        pdf.text(category.toUpperCase(), 14, tableY)
+        autoTable(pdf, {
+          startY: tableY + 3,
+          head: [headers],
+          body: categoryBooks.map((book) => [
+            book.title,
+            book.author,
+            book.status === 'E-book' ? 'Digital' : `${book.available_copies ?? 0} / ${book.total_copies ?? 1}`
+          ]),
+          theme: 'grid',
+          margin: { left: 14, right: 14 },
+          styles: { font: 'helvetica', fontSize: 8, cellPadding: 2, lineColor: [150, 150, 150], lineWidth: 0.15 },
+          headStyles: { fillColor: [16, 33, 49], textColor: 255, fontStyle: 'bold', halign: 'center' },
+          columnStyles: { 0: { cellWidth: 85 }, 1: { cellWidth: 72 }, 2: { cellWidth: 18, halign: 'center' } }
+        })
+        tableY = (pdf as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 9
+      })
+    } else {
+      autoTable(pdf, {
+        startY: 42,
+        head: [headers],
+        body: rows,
+        theme: 'grid',
+        margin: { left: 10, right: 10 },
+        styles: { font: 'helvetica', fontSize: 8, cellPadding: 2, overflow: 'linebreak', lineColor: [150, 150, 150], lineWidth: 0.15 },
+        headStyles: { fillColor: [16, 33, 49], textColor: 255, fontStyle: 'bold', halign: 'center' }
+      })
+    }
+
+    const pages = pdf.getNumberOfPages()
+    const pageHeight = pdf.internal.pageSize.getHeight()
+    for (let page = 1; page <= pages; page++) {
+      pdf.setPage(page)
+      pdf.setFont('helvetica', 'normal')
+      pdf.setFontSize(8)
+      pdf.text(`Generated ${new Date().toLocaleDateString()}  |  Page ${page} of ${pages}`, pageWidth / 2, pageHeight - 9, { align: 'center' })
+    }
+    pdf.save(filename)
   }
 
   // =============================================================
@@ -1783,6 +1886,9 @@ export default function App() {
               </button>
               {(currentUser.role === 'Librarian' || currentUser.role === 'Administrator') && (
                 <>
+                  <button className={view === 'control' ? 'active' : ''} onClick={() => navigateToView('control')}>
+                    <Settings size={18} /> Control Panel
+                  </button>
                   <button className={view === 'users' ? 'active' : ''} onClick={() => navigateToView('users')}>
                     <UserCheck size={18} /> Student Records
                   </button>
@@ -2212,6 +2318,40 @@ export default function App() {
           </>
         )}
 
+        {view === 'control' && (currentUser.role === 'Librarian' || currentUser.role === 'Administrator') && (
+          <section className="panel-card control-panel">
+            <div className="panel-card-header">
+              <div className="panel-title">
+                <Settings size={20} />
+                <h3>Control Panel</h3>
+              </div>
+            </div>
+            <p className="panel-subtitle">Open the library operations you need.</p>
+            <div className="control-panel-grid">
+              <button className="control-action-card" onClick={() => navigateToView('catalog')}>
+                <BookOpen size={22} />
+                <span>Catalog</span>
+              </button>
+              <button className="control-action-card" onClick={() => navigateToView('qr')}>
+                <QrCode size={22} />
+                <span>Gate Station</span>
+              </button>
+              <button className="control-action-card" onClick={() => navigateToView('users')}>
+                <UserCheck size={22} />
+                <span>Student Records</span>
+              </button>
+              <button className="control-action-card" onClick={() => navigateToView('reports')}>
+                <FileText size={22} />
+                <span>Reports</span>
+              </button>
+              <button className="control-action-card" onClick={() => navigateToView('trash')}>
+                <Trash2 size={22} />
+                <span>Recovery</span>
+              </button>
+            </div>
+          </section>
+        )}
+
         {/* VIEW CATALOG (SHELF AND E-BOOKS LIST) */}
         {view === 'catalog' && (
           <div className="panel-card">
@@ -2238,6 +2378,57 @@ export default function App() {
                   onChange={(e) => setQuery(e.target.value)}
                 />
               </div>
+              <div className="catalog-filter-control">
+                <button
+                  type="button"
+                  className="btn-secondary catalog-filter-trigger"
+                  onClick={() => setIsCatalogFilterOpen((isOpen) => !isOpen)}
+                  aria-expanded={isCatalogFilterOpen}
+                >
+                  <SlidersHorizontal size={16} /> Filter &amp; sort
+                </button>
+                {isCatalogFilterOpen && (
+                  <div className="catalog-filter-menu">
+                    <label>Category
+                      <select value={selectedCategory} onChange={(e) => setSelectedCategory(e.target.value)}>
+                        {categoriesList.map((category) => <option key={category} value={category}>{category === 'All' ? 'All categories' : category}</option>)}
+                      </select>
+                    </label>
+                    <label>Year level
+                      <select value={catalogRelevance} onChange={(e) => setCatalogRelevance(e.target.value)}>
+                        <option value="All">All year levels</option>
+                        {Array.from(new Set(books.map((book) => book.program_strand_relevance || 'General'))).sort().map((level) => <option key={level} value={level}>{level}</option>)}
+                      </select>
+                    </label>
+                    <label>Availability
+                      <select value={catalogAvailability} onChange={(e) => setCatalogAvailability(e.target.value)}>
+                        <option value="All">All availability</option>
+                        <option value="Available">Available</option>
+                        <option value="Borrowed">Borrowed</option>
+                        <option value="E-book">E-book</option>
+                      </select>
+                    </label>
+                    <label>Sort by
+                      <select value={catalogSort} onChange={(e) => setCatalogSort(e.target.value)}>
+                        <option value="title-asc">Title A-Z</option>
+                        <option value="title-desc">Title Z-A</option>
+                        <option value="author-asc">Author A-Z</option>
+                        <option value="author-desc">Author Z-A</option>
+                        <option value="isbn-asc">ISBN ascending</option>
+                        <option value="isbn-desc">ISBN descending</option>
+                        <option value="category-asc">Category A-Z</option>
+                        <option value="category-desc">Category Z-A</option>
+                        <option value="year-asc">Year level A-Z</option>
+                        <option value="year-desc">Year level Z-A</option>
+                        <option value="copies-desc">Most copies first</option>
+                        <option value="copies-asc">Fewest copies first</option>
+                        <option value="status-asc">Availability A-Z</option>
+                        <option value="status-desc">Availability Z-A</option>
+                      </select>
+                    </label>
+                  </div>
+                )}
+              </div>
             </div>
 
             <div className="table-container">
@@ -2255,12 +2446,12 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredBooks.length === 0 ? (
+                  {catalogBooks.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="empty-msg">No book matches found in catalog.</td>
+                      <td colSpan={8} className="empty-msg">No book matches the selected filters.</td>
                     </tr>
                   ) : (
-                    filteredBooks.map((book) => (
+                    catalogBooks.map((book) => (
                       <tr key={book.book_id}>
                         <td style={{ fontWeight: '700' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -2697,7 +2888,7 @@ export default function App() {
             </div>
 
             <p style={{ fontSize: '0.9rem', color: '#cbd5e1', marginBottom: '24px' }}>
-              Download official school reports for borrowed books, overdue books, user activity, and inventory documentation as Excel-compatible CSV files.
+              Download official school reports for borrowed books, overdue books, user activity, and inventory documentation as PDF files.
             </p>
 
             <div className="reports-grid">
@@ -2705,10 +2896,10 @@ export default function App() {
               <div className="report-item-card">
                 <div className="report-card-top">
                   <strong>Book Inventory Masterlist</strong>
-                  <span>Format: Excel-compatible CSV • System Generated</span>
-                  <p>Comprehensive report outlining all books catalogued in the system, detailing author, ISBN, category, and shelf status.</p>
+                  <span>Format: PDF • System Generated</span>
+                  <p>Template-based inventory masterlist, organized by category with title, author, and copies only.</p>
                 </div>
-                <button className="btn-primary btn-report-download" onClick={() => handleExportCSV('books')}>
+                <button className="btn-primary btn-report-download" onClick={() => handleExportPDF('books')}>
                   Download Inventory Report
                 </button>
               </div>
@@ -2716,10 +2907,10 @@ export default function App() {
               <div className="report-item-card">
                 <div className="report-card-top">
                   <strong>Borrowed Books and Transactions</strong>
-                  <span>Format: Excel-compatible CSV • Live Operations</span>
+                  <span>Format: PDF • Live Operations</span>
                   <p>Comprehensive transaction log listing all active borrowings, request submissions, return deadlines, and overdue status.</p>
                 </div>
-                <button className="btn-primary btn-report-download" onClick={() => handleExportCSV('transactions')}>
+                <button className="btn-primary btn-report-download" onClick={() => handleExportPDF('transactions')}>
                   Download Borrowed Books Report
                 </button>
               </div>
@@ -2727,10 +2918,10 @@ export default function App() {
               <div className="report-item-card">
                 <div className="report-card-top">
                   <strong>Overdue Books and SMS Follow-up</strong>
-                  <span>Format: Excel-compatible CSV • Due Monitoring</span>
+                  <span>Format: PDF • Due Monitoring</span>
                   <p>Focused report for overdue books, borrower academic details, due dates, and notification readiness for librarian action.</p>
                 </div>
-                <button className="btn-primary btn-report-download" onClick={() => handleExportCSV('overdue')}>
+                <button className="btn-primary btn-report-download" onClick={() => handleExportPDF('overdue')}>
                   Download Overdue Report
                 </button>
               </div>
@@ -2738,10 +2929,10 @@ export default function App() {
               <div className="report-item-card">
                 <div className="report-card-top">
                   <strong>User Activity Directory</strong>
-                  <span>Format: Excel-compatible CSV • Dynamic</span>
+                  <span>Format: PDF • Dynamic</span>
                   <p>Administrative log summarizing user identities, academic program or strand, year level, and contact details.</p>
                 </div>
-                <button className="btn-primary btn-report-download" onClick={() => handleExportCSV('users')}>
+                <button className="btn-primary btn-report-download" onClick={() => handleExportPDF('users')}>
                   Download User Activity Report
                 </button>
               </div>

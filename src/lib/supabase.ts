@@ -73,7 +73,7 @@ export interface TrashRecord {
   record_type: 'Book' | 'User'
   original_id: number
   title_or_name: string
-  data: any
+  data: unknown
   deleted_at: string
   deleted_by?: string
 }
@@ -114,11 +114,13 @@ export const mockData = {
     { log_id: 3, user_id: 1, type: 'Exit', timestamp: new Date(Date.now() - 2 * 3600000).toISOString() }
   ] as LibraryLog[],
 
-  notifications: [
-    { notification_id: 1, user_id: 1, phone_number: '+639123456789', message: 'LibraSmart Alert: The book "Research Methods in Computing" was borrowed by you and is now OVERDUE since May 24, 2026. Please return it to avoid penalty.', notification_type: 'Overdue', status: 'Sent', date_sent: new Date(Date.now() - 86400000).toISOString() },
-    { notification_id: 2, user_id: 2, phone_number: '+639234567890', message: 'LibraSmart Alert: You have borrowed "Web Systems Design & Development". Due date is June 03, 2026.', notification_type: 'Transaction', status: 'Sent', date_sent: new Date(Date.now() - 5 * 86400000).toISOString() }
-  ] as Notification[]
+  notifications: [] as Notification[]
 }
+
+const legacyFallbackNotificationMessages = new Set([
+  'LibraSmart Alert: The book "Research Methods in Computing" was borrowed by you and is now OVERDUE since May 24, 2026. Please return it to avoid penalty.',
+  'LibraSmart Alert: You have borrowed "Web Systems Design & Development". Due date is June 03, 2026.'
+])
 
 // Local storage helpers to manage mock data locally if Supabase offline/missing tables
 const getStoredMock = <T>(key: keyof typeof mockData, defaultValue: T): T => {
@@ -554,7 +556,7 @@ export async function fetchNotifications(): Promise<Notification[]> {
   if (useMock) {
     const notifs = getStoredMock<Notification[]>('notifications', mockData.notifications)
     const us = getStoredMock<User[]>('users', mockData.users)
-    return notifs.map(n => ({
+    return notifs.filter((notification) => !legacyFallbackNotificationMessages.has(notification.message)).map(n => ({
       ...n,
       users: us.find(u => u.user_id === n.user_id)
     })).sort((a, b) => new Date(b.date_sent).getTime() - new Date(a.date_sent).getTime())
@@ -804,7 +806,7 @@ export async function sendSMSViaSemaphore(phoneNumber: string, message: string):
       'https://api.semaphore.co/api/v4/messages'
     ]
 
-    let lastError: any = null
+    let lastError: unknown = null
     for (const endpoint of endpoints) {
       try {
         const res = await fetch(endpoint, {

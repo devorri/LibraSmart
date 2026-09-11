@@ -12,7 +12,6 @@ export function SMSPhoneSimulator({ currentUser, triggerRefreshSignal }: SMSPhon
   const [isOpen, setIsOpen] = useState(false)
   const [notifications, setNotifications] = useState<Notification[]>([])
   const [unreadCount, setUnreadCount] = useState(0)
-  const [activeBanner, setActiveBanner] = useState<Notification | null>(null)
   const previousNotificationCountRef = useRef(0)
 
   // Load notifications
@@ -26,17 +25,11 @@ export function SMSPhoneSimulator({ currentUser, triggerRefreshSignal }: SMSPhon
           ? data
           : data.filter(n => n.user_id === currentUser.user_id)
 
-        // Detect if there is a brand new notification that wasn't in our previous list
+        // Keep the unread count current without surfacing message content as a system alert.
         if (previousNotificationCountRef.current > 0 && data.length > previousNotificationCountRef.current) {
           const newNotif = data[0] // Since it's sorted by date_sent desc
-          // Show slide-down notification banner
           if (currentUser.role === 'Librarian' || currentUser.role === 'Administrator' || newNotif.user_id === currentUser.user_id) {
-            setActiveBanner(newNotif)
             setUnreadCount(prev => prev + 1)
-            // Auto hide banner after 5 seconds
-            setTimeout(() => {
-              setActiveBanner(null);
-            }, 5000)
           }
         }
         previousNotificationCountRef.current = data.length
@@ -68,22 +61,6 @@ export function SMSPhoneSimulator({ currentUser, triggerRefreshSignal }: SMSPhon
 
   return (
     <>
-      {/* Dynamic Slide-down SMS Toast Banner */}
-      {activeBanner && (
-        <div className="sms-banner-alert" onClick={() => { setIsOpen(true); setActiveBanner(null); }}>
-          <div className="sms-banner-icon">
-            <Smartphone size={20} />
-          </div>
-          <div className="sms-banner-content">
-            <div className="sms-banner-title">
-              <span>Message • {activeBanner.users?.name || 'User'}</span>
-              <small>now</small>
-            </div>
-            <p className="sms-banner-text">{activeBanner.message}</p>
-          </div>
-        </div>
-      )}
-
       {/* Floating Toggle Button */}
       <button 
         className={`sms-floating-trigger ${isOpen ? 'active' : ''}`} 

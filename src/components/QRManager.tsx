@@ -296,6 +296,8 @@ export function QRManager({ currentUser, onLogCreated }: QRManagerProps): React.
       }, 100)
       return () => clearTimeout(timer)
     }
+    // The scanner callbacks use refs for current scan state; camera start should only follow role changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser])
 
   const isElevatedUser = currentUser?.role === 'Librarian' || currentUser?.role === 'Administrator';
