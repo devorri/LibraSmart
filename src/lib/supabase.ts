@@ -19,6 +19,15 @@ export interface User {
   created_at?: string
 }
 
+export const getPasswordValidationError = (password: string): string | null => {
+  if (password.length < 8) return 'Password must be at least 8 characters.'
+  if (!/[A-Z]/.test(password)) return 'Password must include at least one uppercase letter.'
+  if (!/[a-z]/.test(password)) return 'Password must include at least one lowercase letter.'
+  if (!/\d/.test(password)) return 'Password must include at least one number.'
+  if (!/[^A-Za-z0-9]/.test(password)) return 'Password must include at least one special character.'
+  return null
+}
+
 export interface Book {
   book_id: number
   title: string
@@ -188,6 +197,25 @@ export async function authenticateUser(username: string, rawPassword: string): P
     }
 
     return data as User | null
+  } catch {
+    return null
+  }
+}
+
+export async function findUserByUsername(username: string): Promise<Pick<User, 'user_id' | 'username' | 'phone_number'> | null> {
+  if (useMock) {
+    const user = getStoredMock<User[]>('users', mockData.users)
+      .find((entry) => entry.username.toLowerCase() === username.toLowerCase())
+    return user ? { user_id: user.user_id, username: user.username, phone_number: user.phone_number } : null
+  }
+  try {
+    const { data, error } = await supabase
+      .from('users')
+      .select('user_id, username, phone_number')
+      .ilike('username', username.trim())
+      .maybeSingle()
+    if (error) throw error
+    return data as Pick<User, 'user_id' | 'username' | 'phone_number'> | null
   } catch {
     return null
   }

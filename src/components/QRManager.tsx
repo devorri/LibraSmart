@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useMemo } from 'react'
 import { addLibraryLog, fetchLibraryLogs, fetchAllUsers } from '../lib/supabase'
 import type { LibraryLog, User } from '../lib/supabase'
 import { QrCode, LogIn, LogOut, History, RefreshCw, Upload, CheckCircle, Camera } from 'lucide-react'
@@ -15,6 +15,7 @@ export function QRManager({ currentUser, onLogCreated }: QRManagerProps): React.
   const [allUsers, setAllUsers] = useState<User[]>([])
   const [guestStudentId, setGuestStudentId] = useState<number | null>(null)
   const [scanType, setScanType] = useState<'Entry' | 'Exit'>('Entry')
+  const [logFilter, setLogFilter] = useState<'All' | 'Entry' | 'Exit'>('All')
   const [cameraActive, setCameraActive] = useState(false)
   const [cameraError, setCameraError] = useState<string | null>(null)
   const [scanResult, setScanResult] = useState<string | null>(null)
@@ -302,6 +303,14 @@ export function QRManager({ currentUser, onLogCreated }: QRManagerProps): React.
 
   const isElevatedUser = currentUser?.role === 'Librarian' || currentUser?.role === 'Administrator';
 
+  const entryCount = useMemo(() => logs.filter((l) => l.type === 'Entry').length, [logs])
+  const exitCount = useMemo(() => logs.filter((l) => l.type === 'Exit').length, [logs])
+
+  const filteredLogs = useMemo(() => {
+    if (logFilter === 'All') return logs
+    return logs.filter((l) => l.type === logFilter)
+  }, [logs, logFilter])
+
   return (
     <div className="qr-manager-section" style={{ width: '100%', maxWidth: isElevatedUser ? '1200px' : '460px', margin: '0 auto' }}>
       {currentUser?.role === 'Librarian' || currentUser?.role === 'Administrator' ? (
@@ -317,8 +326,8 @@ export function QRManager({ currentUser, onLogCreated }: QRManagerProps): React.
             </div>
 
             {/* Displaying stationary gate check-in/out QR Code */}
-            <div className="viewfinder-container" style={{ padding: '24px 0', display: 'grid', placeItems: 'center' }}>
-              <div className="viewfinder-screen" style={{ width: '220px', height: '220px', background: '#ffffff', border: '1px solid var(--color-border)', borderRadius: '12px', display: 'grid', placeItems: 'center', boxShadow: '0 4px 12px rgba(0,0,0,0.05)' }}>
+            <div className="viewfinder-container" style={{ padding: '20px 0', display: 'grid', placeItems: 'center' }}>
+              <div className="viewfinder-screen" style={{ width: '220px', height: '220px', background: '#ffffff', border: '1px solid var(--color-border)', borderRadius: '14px', display: 'grid', placeItems: 'center', boxShadow: '0 8px 24px rgba(0,0,0,0.2)' }}>
                 <QRCodeSVG
                   value="MPCI-LIBRARY-GATE"
                   size={190}
@@ -331,39 +340,74 @@ export function QRManager({ currentUser, onLogCreated }: QRManagerProps): React.
               </div>
             </div>
 
-            <div style={{ textAlign: 'center', padding: '0 24px 24px 24px', color: 'var(--color-text-muted)', fontSize: '0.88rem' }}>
-              <p style={{ fontWeight: '850', color: 'var(--color-text)', marginBottom: '8px' }}>Stationary Entrance QR Code</p>
-              <p>Students and teachers can scan this QR code with their mobile devices to log their Entry or Exit attendance automatically.</p>
+            <div style={{ textAlign: 'center', padding: '0 16px 16px 16px', color: 'var(--color-text-muted)', fontSize: '0.86rem' }}>
+              <p style={{ fontWeight: '700', color: 'var(--color-text)', marginBottom: '6px' }}>Stationary Entrance QR Code</p>
+              <p style={{ margin: 0, lineHeight: 1.45 }}>Students and teachers can scan this QR code with their mobile devices to log Entry or Exit attendance automatically.</p>
             </div>
           </div>
 
           {/* Live Entry Exit Logs */}
           <div className="qr-panel gate-history">
-            <div className="panel-header">
-              <History className="header-icon text-gold" />
-              <div>
-                <h3>Gate Entries & Exits</h3>
-                <p className="subtitle">Real-time attendance tracking feed</p>
+            <div className="panel-header-clean">
+              <div className="panel-header-title">
+                <History className="header-icon text-gold" />
+                <div>
+                  <h3 className="feed-title">Gate Entries & Exits</h3>
+                  <p className="feed-subtitle">Real-time attendance tracking feed</p>
+                </div>
               </div>
-              <button className="btn-icon-refresh" onClick={loadData} title="Refresh Logs">
-                <RefreshCw size={16} />
-              </button>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <div className="log-filter-pills">
+                  <button
+                    type="button"
+                    className={`filter-pill ${logFilter === 'All' ? 'active' : ''}`}
+                    onClick={() => setLogFilter('All')}
+                  >
+                    All ({logs.length})
+                  </button>
+                  <button
+                    type="button"
+                    className={`filter-pill entry ${logFilter === 'Entry' ? 'active' : ''}`}
+                    onClick={() => setLogFilter('Entry')}
+                  >
+                    <LogIn size={11} /> Entry ({entryCount})
+                  </button>
+                  <button
+                    type="button"
+                    className={`filter-pill exit ${logFilter === 'Exit' ? 'active' : ''}`}
+                    onClick={() => setLogFilter('Exit')}
+                  >
+                    <LogOut size={11} /> Exit ({exitCount})
+                  </button>
+                </div>
+                <button className="btn-icon-refresh" onClick={loadData} title="Refresh Logs">
+                  <RefreshCw size={16} />
+                </button>
+              </div>
             </div>
 
             <div className="logs-feed-container">
-              {logs.length === 0 ? (
-                <p className="empty-msg">No entries or exits logged today.</p>
+              {filteredLogs.length === 0 ? (
+                <div className="empty-logs-state">
+                  <History size={32} style={{ opacity: 0.3, marginBottom: '8px' }} />
+                  <p className="empty-msg">No {logFilter !== 'All' ? logFilter.toLowerCase() : ''} logs recorded today.</p>
+                </div>
               ) : (
                 <div className="logs-feed-list">
-                  {logs.map((log) => (
+                  {filteredLogs.map((log) => (
                     <div key={log.log_id} className={`log-feed-row ${log.type.toLowerCase()}`}>
                       <div className="log-type-indicator">
-                        {log.type === 'Entry' ? <LogIn size={14} /> : <LogOut size={14} />}
+                        {log.type === 'Entry' ? <LogIn size={13} /> : <LogOut size={13} />}
                         <span>{log.type}</span>
                       </div>
                       <div className="log-user-details">
                         <strong>{log.users?.name || 'Unknown User'}</strong>
-                        <span>{log.users?.role} • {log.users?.program_strand || 'General'}</span>
+                        <div className="log-user-sub">
+                          <span className="role-tag">{log.users?.role || 'User'}</span>
+                          <span className="dot-divider">•</span>
+                          <span className="program-tag">{log.users?.program_strand || 'General'}</span>
+                        </div>
                       </div>
                       <div className="log-timestamp">
                         {new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}

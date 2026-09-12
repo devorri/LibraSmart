@@ -29,7 +29,8 @@ import {
   uploadProfilePhoto,
   updateUser,
   uploadEbookFile,
-  hashPassword
+  hashPassword,
+  getPasswordValidationError
 } from './lib/supabase'
 
 import {
@@ -61,11 +62,11 @@ import {
   ShieldCheck,
   KeyRound,
   RefreshCw,
-  Settings,
-  SlidersHorizontal
+  SlidersHorizontal,
+  UserRound
 } from 'lucide-react'
 
-type View = 'overview' | 'catalog' | 'ai' | 'analytics' | 'reports' | 'qr' | 'users' | 'storefront' | 'trash' | 'control'
+type View = 'overview' | 'catalog' | 'ai' | 'analytics' | 'reports' | 'qr' | 'users' | 'storefront' | 'trash' | 'profile'
 
 type ExternalBookResult = {
   key: string
@@ -125,6 +126,13 @@ export default function App() {
 
   // Change Password Modal State
   const [isChangePasswordOpen, setIsChangePasswordOpen] = useState(false)
+  const [profileName, setProfileName] = useState('')
+  const [profilePhone, setProfilePhone] = useState('')
+  const [profileRole, setProfileRole] = useState<'Student' | 'Teacher'>('Student')
+  const [profileAcademicLevel, setProfileAcademicLevel] = useState('1st Year')
+  const [profileProgramStrand, setProfileProgramStrand] = useState('ICT')
+  const [profileMsg, setProfileMsg] = useState<{ type: 'error' | 'success'; text: string } | null>(null)
+  const [profileSaving, setProfileSaving] = useState(false)
   const [currentPasswordInput, setCurrentPasswordInput] = useState('')
   const [newPasswordInput, setNewPasswordInput] = useState('')
   const [confirmPasswordInput, setConfirmPasswordInput] = useState('')
@@ -135,7 +143,17 @@ export default function App() {
   const [changePasswordTimerSec, setChangePasswordTimerSec] = useState<number>(0)
   const [changePasswordMsg, setChangePasswordMsg] = useState<{ type: 'error' | 'success'; text: string } | null>(null)
   const [changePasswordLoading, setChangePasswordLoading] = useState(false)
-  
+
+  // Admin User Management Modal State
+  const [editingUser, setEditingUser] = useState<User | null>(null)
+  const [editUserPhone, setEditUserPhone] = useState('')
+  const [editUserNewPassword, setEditUserNewPassword] = useState('')
+  const [editUserConfirmPassword, setEditUserConfirmPassword] = useState('')
+  const [editUserMsg, setEditUserMsg] = useState<{ type: 'error' | 'success'; text: string } | null>(null)
+  const [editUserSaving, setEditUserSaving] = useState(false)
+  const [userListFilter, setUserListFilter] = useState('')
+  const [userListRoleFilter, setUserListRoleFilter] = useState<'All' | 'Student' | 'Teacher' | 'Librarian' | 'Administrator'>('All')
+
   // Interaction/Simulations States
   const [query, setQuery] = useState('')
   const [isGatePassModalOpen, setIsGatePassModalOpen] = useState(false)
@@ -176,7 +194,6 @@ export default function App() {
   const ebookFileInputRef = useRef<HTMLInputElement>(null)
 
   const isStudent = currentUser?.role === 'Student'
-  const studentCount = useMemo(() => users.filter((u) => u.role === 'Student').length, [users])
 
   const buildHistoryUrl = (nextView: View, nextStoreTab: 'home' | 'catalog', nextEbook: Book | null, nextLoginModal: boolean) => {
     const params = new URLSearchParams()
@@ -200,6 +217,53 @@ export default function App() {
   const navigateToView = (nextView: View) => {
     const resolvedView = isStudent && restrictedStudentViews.includes(nextView) ? 'overview' : nextView
     setView(resolvedView)
+  }
+
+  useEffect(() => {
+    if (!currentUser) return
+    const syncProfile = window.setTimeout(() => {
+      setProfileName(currentUser.name || '')
+      setProfilePhone(currentUser.phone_number || '')
+      setProfileRole(currentUser.role === 'Teacher' ? 'Teacher' : 'Student')
+      setProfileAcademicLevel(currentUser.academic_level || '1st Year')
+      setProfileProgramStrand(currentUser.program_strand || 'ICT')
+    }, 0)
+    return () => window.clearTimeout(syncProfile)
+  }, [currentUser])
+
+  const handleSaveProfileInformation = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!currentUser) return
+    if (!profileName.trim() || !profilePhone.trim()) {
+      setProfileMsg({ type: 'error', text: 'Full Name and Mobile Phone Number are required.' })
+      return
+    }
+    setProfileSaving(true)
+    setProfileMsg(null)
+
+    let formattedPhone = profilePhone.trim()
+    if (formattedPhone.startsWith('09')) {
+      formattedPhone = '+63' + formattedPhone.slice(1)
+    } else if (!formattedPhone.startsWith('+')) {
+      formattedPhone = '+63' + formattedPhone
+    }
+
+    const updates = {
+      name: profileName.trim(),
+      phone_number: formattedPhone,
+      role: profileRole,
+      academic_level: profileAcademicLevel,
+      program_strand: profileProgramStrand
+    }
+
+    const updated = await updateUser(currentUser.user_id, updates)
+    setProfileSaving(false)
+    if (updated) {
+      setCurrentUser((prev) => prev ? { ...prev, ...updates } : prev)
+      setProfileMsg({ type: 'success', text: 'Personal information updated successfully!' })
+    } else {
+      setProfileMsg({ type: 'error', text: 'Unable to save profile changes. Please try again.' })
+    }
   }
 
   const loadTrashData = useCallback(async () => {
@@ -237,7 +301,7 @@ export default function App() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     const viewParam = params.get('view') as View | null
-    const validViews: View[] = ['overview', 'catalog', 'ai', 'analytics', 'reports', 'qr', 'users', 'storefront', 'trash', 'control']
+    const validViews: View[] = ['overview', 'catalog', 'ai', 'analytics', 'reports', 'qr', 'users', 'storefront', 'trash', 'profile']
     const initialView = viewParam && validViews.includes(viewParam) ? viewParam : 'storefront'
     const initialStoreTab = params.get('tab') === 'catalog' ? 'catalog' : 'home'
     const initialBookId = params.get('book')
@@ -284,7 +348,7 @@ export default function App() {
     const handlePopState = () => {
       const params = new URLSearchParams(window.location.search)
       const viewParam = params.get('view') as View | null
-    const validViews: View[] = ['overview', 'catalog', 'ai', 'analytics', 'reports', 'qr', 'users', 'storefront', 'trash', 'control']
+    const validViews: View[] = ['overview', 'catalog', 'ai', 'analytics', 'reports', 'qr', 'users', 'storefront', 'trash', 'profile']
       const nextView = viewParam && validViews.includes(viewParam) ? viewParam : 'storefront'
       const nextStoreTab = params.get('tab') === 'catalog' ? 'catalog' : 'home'
       const nextBookId = params.get('book')
@@ -332,6 +396,13 @@ export default function App() {
 
     if (!newStudentName || !newStudentUsername || !newStudentPassword || !newStudentPhone) {
       setNewStudentError('Please fill in all required student fields.')
+      setNewStudentLoading(false)
+      return
+    }
+
+    const passwordError = getPasswordValidationError(newStudentPassword)
+    if (passwordError) {
+      setNewStudentError(passwordError)
       setNewStudentLoading(false)
       return
     }
@@ -549,6 +620,32 @@ export default function App() {
     setIsUploadingAvatar(false)
   }
 
+  /*
+  const _handleSaveProfile = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault()
+    if (!currentUser) return
+    const form = new FormData(e.currentTarget)
+    const name = String(form.get('profile-name') || '').trim()
+    const phone_number = String(form.get('profile-phone') || '').trim()
+    const program_strand = String(form.get('profile-program') || '').trim()
+    const academic_level = String(form.get('profile-level') || '').trim()
+    if (!name || !phone_number) {
+      _setProfileMessage({ type: 'error', text: 'Name and mobile number are required.' })
+      return
+    }
+    _setProfileSaving(true)
+    const updates = { name, phone_number, program_strand, academic_level }
+    const saved = await updateUser(currentUser.user_id, updates)
+    _setProfileSaving(false)
+    if (saved) {
+      setCurrentUser((user) => user ? { ...user, ...updates } : user)
+      _setProfileMessage({ type: 'success', text: 'Profile updated successfully.' })
+    } else {
+      _setProfileMessage({ type: 'error', text: 'Unable to update your profile. Please try again.' })
+    }
+  }
+  */
+
   const handleDeleteBook = async (book_id: number) => {
     const book = books.find(b => b.book_id === book_id)
     if (!book) return
@@ -570,6 +667,62 @@ export default function App() {
       } else {
         alert('Could not move user record to trash.')
       }
+    }
+  }
+
+  const openEditUserModal = (user: User) => {
+    setEditingUser(user)
+    setEditUserPhone(user.phone_number || '')
+    setEditUserNewPassword('')
+    setEditUserConfirmPassword('')
+    setEditUserMsg(null)
+  }
+
+  const handleSaveEditUser = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!editingUser) return
+    setEditUserSaving(true)
+    setEditUserMsg(null)
+
+    let formattedPhone = editUserPhone.trim()
+    if (formattedPhone.startsWith('09')) {
+      formattedPhone = '+63' + formattedPhone.slice(1)
+    } else if (formattedPhone && !formattedPhone.startsWith('+')) {
+      formattedPhone = '+63' + formattedPhone
+    }
+
+    const updates: Partial<User> & { password?: string } = {
+      phone_number: formattedPhone || null
+    }
+
+    if (editUserNewPassword.trim()) {
+      if (editUserNewPassword !== editUserConfirmPassword) {
+        setEditUserMsg({ type: 'error', text: 'Passwords do not match.' })
+        setEditUserSaving(false)
+        return
+      }
+      const pwError = getPasswordValidationError(editUserNewPassword)
+      if (pwError) {
+        setEditUserMsg({ type: 'error', text: pwError })
+        setEditUserSaving(false)
+        return
+      }
+      updates.password = await hashPassword(editUserNewPassword)
+    }
+
+    const ok = await updateUser(editingUser.user_id, updates)
+    setEditUserSaving(false)
+
+    if (ok) {
+      setEditUserMsg({ type: 'success', text: editingUser.name + "'s account updated successfully." })
+      loadDatabaseData()
+      setUsers(prev => prev.map(u => u.user_id === editingUser.user_id ? { ...u, phone_number: formattedPhone || null } : u))
+      setTimeout(() => {
+        setEditingUser(null)
+        setEditUserMsg(null)
+      }, 1500)
+    } else {
+      setEditUserMsg({ type: 'error', text: 'Failed to update user. Please try again.' })
     }
   }
 
@@ -618,8 +771,9 @@ export default function App() {
       return
     }
 
-    if (newPasswordInput.length < 4) {
-      setChangePasswordMsg({ type: 'error', text: 'Password must be at least 4 characters.' })
+    const passwordError = getPasswordValidationError(newPasswordInput)
+    if (passwordError) {
+      setChangePasswordMsg({ type: 'error', text: passwordError })
       return
     }
 
@@ -1812,7 +1966,7 @@ export default function App() {
         {/* ENTRY / EXIT GATE PASS MODAL SCREEN */}
         {isGatePassModalOpen && (
           <div className="test-sms-modal-overlay" onClick={() => setIsGatePassModalOpen(false)}>
-            <div className="test-sms-modal-content" style={{ maxWidth: '640px' }} onClick={(e) => e.stopPropagation()}>
+            <div className="test-sms-modal-content gate-pass-modal-box" style={{ maxWidth: (currentUser?.role === 'Librarian' || currentUser?.role === 'Administrator') ? '980px' : '520px', width: '94vw', maxHeight: '90vh', overflowY: 'auto' }} onClick={(e) => e.stopPropagation()}>
               <div className="test-sms-header" style={{ marginBottom: '12px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <QrCode size={20} style={{ color: '#2dd4bf' }} />
@@ -1865,6 +2019,12 @@ export default function App() {
           <button className={view === 'catalog' ? 'active' : ''} onClick={() => navigateToView('catalog')}>
             <BookOpen size={18} /> Book Catalog
           </button>
+
+          {(currentUser.role === 'Student' || currentUser.role === 'Teacher') && (
+            <button className={view === 'profile' ? 'active' : ''} onClick={() => { setProfileMsg(null); navigateToView('profile') }}>
+              <UserRound size={18} /> My Profile
+            </button>
+          )}
           
           {currentUser.role !== 'Librarian' && currentUser.role !== 'Administrator' && (
             <button className={view === 'ai' ? 'active' : ''} onClick={() => navigateToView('ai')}>
@@ -1886,9 +2046,6 @@ export default function App() {
               </button>
               {(currentUser.role === 'Librarian' || currentUser.role === 'Administrator') && (
                 <>
-                  <button className={view === 'control' ? 'active' : ''} onClick={() => navigateToView('control')}>
-                    <Settings size={18} /> Control Panel
-                  </button>
                   <button className={view === 'users' ? 'active' : ''} onClick={() => navigateToView('users')}>
                     <UserCheck size={18} /> Student Records
                   </button>
@@ -1936,17 +2093,15 @@ export default function App() {
               </span>
             </div>
           </div>
-          <button
-            className="btn-secondary"
-            style={{ width: '100%', marginBottom: '6px', fontSize: '0.75rem', padding: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
-            onClick={() => {
-              setIsChangePasswordOpen(true)
-              setChangePasswordMsg(null)
-              setChangePasswordOtpStep(false)
-            }}
-          >
-            <KeyRound size={14} /> Change Password
-          </button>
+          {(currentUser.role === 'Librarian' || currentUser.role === 'Administrator') && (
+            <button
+              className="btn-secondary"
+              style={{ width: '100%', marginBottom: '6px', fontSize: '0.75rem', padding: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
+              onClick={() => { setIsChangePasswordOpen(true); setChangePasswordMsg(null); setChangePasswordOtpStep(false) }}
+            >
+              <KeyRound size={14} /> Change Password
+            </button>
+          )}
           <button className="btn-logout" onClick={handleLogout}>
             <LogOut size={14} /> Sign Out
           </button>
@@ -1985,13 +2140,6 @@ export default function App() {
                 <div className="hero-actions">
                   <button className="btn-primary" onClick={() => navigateToView(roleFocus.primaryView)}>
                     {roleFocus.primary}
-                  </button>
-                  <button 
-                    className="btn-secondary" 
-                    onClick={() => setIsGatePassModalOpen(true)} 
-                    style={{ color: '#2dd4bf', borderColor: 'rgba(45, 212, 191, 0.4)', display: 'inline-flex', alignItems: 'center', gap: '8px' }}
-                  >
-                    <QrCode size={18} /> Entry / Exit Gate Pass
                   </button>
                   {currentUser?.role !== 'Student' && (
                     <button className="btn-secondary" onClick={() => navigateToView(roleFocus.secondaryView)}>
@@ -2318,35 +2466,154 @@ export default function App() {
           </>
         )}
 
-        {view === 'control' && (currentUser.role === 'Librarian' || currentUser.role === 'Administrator') && (
-          <section className="panel-card control-panel">
-            <div className="panel-card-header">
-              <div className="panel-title">
-                <Settings size={20} />
-                <h3>Control Panel</h3>
+        {/* VIEW PROFILE (STUDENT & TEACHER EDIT PERSONAL INFORMATION) */}
+        {view === 'profile' && currentUser && (
+          <section className="panel-card profile-management-card" style={{ maxWidth: '850px', margin: '0 auto' }}>
+            <div className="panel-card-header" style={{ marginBottom: '20px', borderBottom: '1px solid rgba(255, 255, 255, 0.1)', paddingBottom: '16px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                <div style={{ width: '64px', height: '64px', borderRadius: '50%', background: 'linear-gradient(135deg, #0f7581, #2dd4bf)', display: 'grid', placeItems: 'center', color: '#ffffff', fontSize: '1.8rem', fontWeight: 'bold', boxShadow: '0 4px 14px rgba(15, 117, 129, 0.4)' }}>
+                  {currentUser.name ? currentUser.name.charAt(0).toUpperCase() : 'U'}
+                </div>
+                <div>
+                  <h2 style={{ margin: 0, color: '#ffffff', fontSize: '1.45rem', fontWeight: 700 }}>{currentUser.name}</h2>
+                  <div style={{ display: 'flex', gap: '10px', marginTop: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
+                    <span style={{ background: 'rgba(45, 212, 191, 0.15)', color: '#2dd4bf', border: '1px solid rgba(45, 212, 191, 0.3)', padding: '3px 12px', borderRadius: '20px', fontSize: '0.78rem', fontWeight: 700 }}>
+                      {currentUser.role}
+                    </span>
+                    <span style={{ color: '#94a3b8', fontSize: '0.85rem' }}>@{currentUser.username}</span>
+                    <span style={{ color: '#475569' }}>•</span>
+                    <span style={{ color: '#38bdf8', fontSize: '0.85rem', fontWeight: 600 }}>{currentUser.program_strand || 'General'}</span>
+                  </div>
+                </div>
               </div>
             </div>
-            <p className="panel-subtitle">Open the library operations you need.</p>
-            <div className="control-panel-grid">
-              <button className="control-action-card" onClick={() => navigateToView('catalog')}>
-                <BookOpen size={22} />
-                <span>Catalog</span>
-              </button>
-              <button className="control-action-card" onClick={() => navigateToView('qr')}>
-                <QrCode size={22} />
-                <span>Gate Station</span>
-              </button>
-              <button className="control-action-card" onClick={() => navigateToView('users')}>
-                <UserCheck size={22} />
-                <span>Student Records</span>
-              </button>
-              <button className="control-action-card" onClick={() => navigateToView('reports')}>
-                <FileText size={22} />
-                <span>Reports</span>
-              </button>
-              <button className="control-action-card" onClick={() => navigateToView('trash')}>
-                <Trash2 size={22} />
-                <span>Recovery</span>
+
+            <div style={{ marginBottom: '20px' }}>
+              <h3 style={{ color: '#ffffff', fontSize: '1.15rem', fontWeight: 700, margin: '0 0 4px 0', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <UserRound size={20} style={{ color: '#2dd4bf' }} /> Edit Personal Information
+              </h3>
+              <p style={{ color: '#94a3b8', fontSize: '0.85rem', margin: 0 }}>Update your contact details, academic level, and program information.</p>
+            </div>
+
+            {profileMsg && (
+              <div className={`login-alert ${profileMsg.type}`} style={{ marginBottom: '20px' }}>
+                {profileMsg.text}
+              </div>
+            )}
+
+            <form onSubmit={handleSaveProfileInformation} style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '18px' }}>
+              <div className="form-group" style={{ gridColumn: 'span 2' }}>
+                <label htmlFor="prof-name" style={{ color: '#cbd5e1', fontSize: '0.88rem', fontWeight: 600, display: 'block', marginBottom: '6px' }}>Full Name</label>
+                <input
+                  id="prof-name"
+                  type="text"
+                  value={profileName}
+                  onChange={(e) => setProfileName(e.target.value)}
+                  placeholder="e.g. Marlon G. Tagamolila"
+                  style={{ width: '100%', padding: '10px 14px', borderRadius: '8px', background: '#09131d', border: '1px solid rgba(255, 255, 255, 0.15)', color: '#ffffff', fontSize: '0.92rem' }}
+                  required
+                />
+              </div>
+
+              <div className="form-group">
+                <label htmlFor="prof-username" style={{ color: '#cbd5e1', fontSize: '0.88rem', fontWeight: 600, display: 'block', marginBottom: '6px' }}>Username</label>
+                <input
+                  id="prof-username"
+                  type="text"
+                  value={currentUser.username}
+                  disabled
+                  style={{ width: '100%', padding: '10px 14px', borderRadius: '8px', background: '#040910', border: '1px solid rgba(255, 255, 255, 0.08)', color: '#64748b', cursor: 'not-allowed', fontSize: '0.92rem' }}
+                />
+                <small style={{ color: '#64748b', fontSize: '0.76rem', marginTop: '4px', display: 'block' }}>Username is unique and cannot be modified.</small>
+              </div>
+
+              <div className="form-group">
+                <label htmlFor="prof-phone" style={{ color: '#cbd5e1', fontSize: '0.88rem', fontWeight: 600, display: 'block', marginBottom: '6px' }}>Mobile Phone Number (for SMS OTP & Gate Pass)</label>
+                <input
+                  id="prof-phone"
+                  type="text"
+                  value={profilePhone}
+                  onChange={(e) => setProfilePhone(e.target.value)}
+                  placeholder="+639123456789"
+                  style={{ width: '100%', padding: '10px 14px', borderRadius: '8px', background: '#09131d', border: '1px solid rgba(255, 255, 255, 0.15)', color: '#ffffff', fontSize: '0.92rem' }}
+                  required
+                />
+              </div>
+
+              <div className="form-group">
+                <label htmlFor="prof-role" style={{ color: '#cbd5e1', fontSize: '0.88rem', fontWeight: 600, display: 'block', marginBottom: '6px' }}>Role</label>
+                <select
+                  id="prof-role"
+                  value={profileRole}
+                  onChange={(e) => setProfileRole(e.target.value as 'Student' | 'Teacher')}
+                  style={{ width: '100%', padding: '10px 14px', borderRadius: '8px', background: '#09131d', border: '1px solid rgba(255, 255, 255, 0.15)', color: '#ffffff', fontSize: '0.92rem' }}
+                >
+                  <option value="Student">Student</option>
+                  <option value="Teacher">Teacher / Faculty</option>
+                </select>
+              </div>
+
+              <div className="form-group">
+                <label htmlFor="prof-level" style={{ color: '#cbd5e1', fontSize: '0.88rem', fontWeight: 600, display: 'block', marginBottom: '6px' }}>Grade / Year Level</label>
+                <select
+                  id="prof-level"
+                  value={profileAcademicLevel}
+                  onChange={(e) => setProfileAcademicLevel(e.target.value)}
+                  style={{ width: '100%', padding: '10px 14px', borderRadius: '8px', background: '#09131d', border: '1px solid rgba(255, 255, 255, 0.15)', color: '#ffffff', fontSize: '0.92rem' }}
+                >
+                  <option value="1st Year">1st Year Course</option>
+                  <option value="2nd Year">2nd Year Course</option>
+                  <option value="3rd Year">3rd Year Course</option>
+                  <option value="4th Year">4th Year Course</option>
+                  <option value="Grade 11">Senior High Grade 11</option>
+                  <option value="Grade 12">Senior High Grade 12</option>
+                  <option value="Faculty">Faculty / Teacher</option>
+                </select>
+              </div>
+
+              <div className="form-group" style={{ gridColumn: 'span 2' }}>
+                <label htmlFor="prof-program" style={{ color: '#cbd5e1', fontSize: '0.88rem', fontWeight: 600, display: 'block', marginBottom: '6px' }}>Program / Academic Strand / Course</label>
+                <select
+                  id="prof-program"
+                  value={profileProgramStrand}
+                  onChange={(e) => setProfileProgramStrand(e.target.value)}
+                  style={{ width: '100%', padding: '10px 14px', borderRadius: '8px', background: '#09131d', border: '1px solid rgba(255, 255, 255, 0.15)', color: '#ffffff', fontSize: '0.92rem' }}
+                >
+                  <option value="ICT">ICT (Information &amp; Communications Technology)</option>
+                  <option value="BSIT">BSIT (BS Information Technology)</option>
+                  <option value="BSA">BSA (BS Accountancy)</option>
+                  <option value="BSBA">BSBA (BS Business Administration)</option>
+                  <option value="BSED">BSED (BS Education)</option>
+                  <option value="STEM">STEM (Science, Tech, Engineering, Math)</option>
+                  <option value="HUMSS">HUMSS (Humanities &amp; Social Sciences)</option>
+                  <option value="ABM">ABM (Accountancy, Business &amp; Management)</option>
+                  <option value="GAS">GAS (General Academic Strand)</option>
+                  <option value="Faculty">Faculty / Department</option>
+                </select>
+              </div>
+
+              <div style={{ gridColumn: 'span 2', display: 'flex', justifyContent: 'flex-end', marginTop: '8px' }}>
+                <button type="submit" className="btn-primary" disabled={profileSaving} style={{ padding: '11px 26px', fontSize: '0.92rem', fontWeight: 650 }}>
+                  {profileSaving ? 'Saving Changes...' : 'Save Profile Changes'}
+                </button>
+              </div>
+            </form>
+
+            <div style={{ marginTop: '28px', paddingTop: '20px', borderTop: '1px solid rgba(255, 255, 255, 0.1)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px' }}>
+              <div>
+                <h4 style={{ margin: 0, color: '#ffffff', fontSize: '1.02rem', fontWeight: 700 }}>Account Security &amp; Password</h4>
+                <p style={{ margin: '4px 0 0 0', color: '#94a3b8', fontSize: '0.82rem' }}>Change your password via secure SMS OTP verification.</p>
+              </div>
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => {
+                  setIsChangePasswordOpen(true)
+                  setChangePasswordMsg(null)
+                  setChangePasswordOtpStep(false)
+                }}
+              >
+                <KeyRound size={16} /> Change Password
               </button>
             </div>
           </section>
@@ -3224,40 +3491,91 @@ export default function App() {
               <div className="panel-card-inner">
                 <div className="panel-card-inner-header">
                   <div>
-                    <h4>Existing Student Records</h4>
-                    <p className="panel-subtitle">Total student accounts: {studentCount}</p>
+                    <h4>All User Accounts</h4>
+                    <p className="panel-subtitle">Manage phone numbers, passwords, and accounts for all users ({users.length} total)</p>
                   </div>
                 </div>
+
+                {/* Search & Role Filter Bar */}
+                <div style={{ display: 'flex', gap: '10px', marginBottom: '14px', flexWrap: 'wrap', alignItems: 'center' }}>
+                  <div style={{ flex: '1 1 220px', position: 'relative' }}>
+                    <Search size={14} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: 'var(--color-text-muted)', pointerEvents: 'none' }} />
+                    <input
+                      type="text"
+                      placeholder="Search by name, username, phone..."
+                      value={userListFilter}
+                      onChange={(e) => setUserListFilter(e.target.value)}
+                      style={{ paddingLeft: '32px', width: '100%' }}
+                    />
+                  </div>
+                  <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                    {(['All', 'Student', 'Teacher', 'Librarian', 'Administrator'] as const).map(role => (
+                      <button
+                        key={role}
+                        className={userListRoleFilter === role ? 'btn-primary' : 'btn-secondary'}
+                        style={{ padding: '5px 12px', fontSize: '0.75rem', borderRadius: '20px' }}
+                        onClick={() => setUserListRoleFilter(role)}
+                      >
+                        {role}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
                 <div className="user-list">
-                  {studentCount === 0 ? (
-                    <p className="empty-msg">No student records found yet.</p>
-                  ) : (
-                    users.filter((u) => u.role === 'Student').map((student) => (
-                      <div key={student.user_id} className="user-list-item" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <div>
-                          <strong>{student.name}</strong>
+                  {(() => {
+                    const filtered = users
+                      .filter(u => userListRoleFilter === 'All' || u.role === userListRoleFilter)
+                      .filter(u => {
+                        if (!userListFilter.trim()) return true
+                        const q = userListFilter.toLowerCase()
+                        return u.name.toLowerCase().includes(q)
+                          || u.username.toLowerCase().includes(q)
+                          || (u.phone_number && u.phone_number.includes(q))
+                          || (u.program_strand && u.program_strand.toLowerCase().includes(q))
+                      })
+                    if (filtered.length === 0) {
+                      return <p className="empty-msg">No user accounts match the current filters.</p>
+                    }
+                    return filtered.map((user) => (
+                      <div key={user.user_id} className="user-list-item" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div style={{ minWidth: 0, flex: 1 }}>
+                          <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                            <strong>{user.name}</strong>
+                            <span className="badge badge-info" style={{ fontSize: '0.68rem', padding: '2px 8px' }}>
+                              {user.role}
+                            </span>
+                          </div>
                           <div style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)', display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap', marginTop: '2px' }}>
-                            <span>@{student.username}</span>
+                            <span>@{user.username}</span>
                             <span>•</span>
-                            <span>Pass: <code style={{ background: 'rgba(255,255,255,0.08)', padding: '1px 5px', borderRadius: '3px', fontSize: '0.72rem' }}>•••••••• (SHA-256)</code></span>
-                            <span>•</span>
-                            <span>{student.program_strand || 'General'} ({student.academic_level || 'N/A'})</span>
+                            <span>{user.phone_number || 'No phone'}</span>
+                            {user.program_strand && (<><span>•</span><span>{user.program_strand} ({user.academic_level || 'N/A'})</span></>)}
                           </div>
                         </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                          <span style={{ fontSize: '0.78rem' }}>{student.phone_number || 'No phone'}</span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
                           <button
                             className="btn-secondary"
-                            style={{ padding: '4px 8px', color: '#dc2626', fontSize: '0.75rem' }}
-                            onClick={() => handleDeleteUser(student)}
-                            title="Move student to Trash"
+                            style={{ padding: '4px 10px', fontSize: '0.75rem' }}
+                            onClick={() => openEditUserModal(user)}
+                            title="Edit user phone number or reset password"
                           >
-                            <Trash2 size={14} /> Delete
+                            <Pencil size={13} /> Edit
                           </button>
+                          {user.role === 'Student' && (
+                            <button
+                              className="btn-secondary"
+                              style={{ padding: '4px 8px', color: '#dc2626', fontSize: '0.75rem' }}
+                              onClick={() => handleDeleteUser(user)}
+                              title="Move student to Trash"
+                            >
+                              <Trash2 size={14} /> Delete
+                            </button>
+                          )}
                         </div>
                       </div>
                     ))
-                  )}
+                  })()}
                 </div>
               </div>
             </div>
@@ -3335,6 +3653,89 @@ export default function App() {
         )}
 
       </section>
+
+      {/* ADMIN EDIT USER MODAL */}
+      {editingUser && (
+        <div className="modal-overlay">
+          <div className="modal-card" style={{ maxWidth: '480px' }}>
+            <div className="modal-header">
+              <h3>Edit User: {editingUser.name}</h3>
+              <button className="btn-close-modal" onClick={() => { setEditingUser(null); setEditUserMsg(null) }}>
+                <X size={18} />
+              </button>
+            </div>
+
+            <div style={{ padding: '20px' }}>
+              {editUserMsg && (
+                <div className={`login-alert ${editUserMsg.type}`}>{editUserMsg.text}</div>
+              )}
+
+              <form onSubmit={handleSaveEditUser} className="admin-form">
+                <div className="form-group">
+                  <label>Username</label>
+                  <input type="text" value={`@${editingUser.username}`} disabled style={{ opacity: 0.6 }} />
+                </div>
+
+                <div className="form-group">
+                  <label>Role</label>
+                  <input type="text" value={editingUser.role} disabled style={{ opacity: 0.6 }} />
+                </div>
+
+                <div className="form-group">
+                  <label htmlFor="edit-user-phone">Phone Number</label>
+                  <input
+                    id="edit-user-phone"
+                    type="text"
+                    value={editUserPhone}
+                    onChange={(e) => setEditUserPhone(e.target.value)}
+                    placeholder="+639123456789"
+                  />
+                </div>
+
+                <div style={{ borderTop: '1px solid rgba(255,255,255,0.08)', margin: '16px 0', paddingTop: '16px' }}>
+                  <p style={{ fontSize: '0.82rem', color: 'var(--color-text-muted)', marginBottom: '12px' }}>
+                    <KeyRound size={14} style={{ verticalAlign: 'middle', marginRight: '6px' }} />
+                    Reset Password (leave blank to keep current password)
+                  </p>
+
+                  <div className="form-group">
+                    <label htmlFor="edit-user-new-pw">New Password</label>
+                    <input
+                      id="edit-user-new-pw"
+                      type="password"
+                      value={editUserNewPassword}
+                      onChange={(e) => setEditUserNewPassword(e.target.value)}
+                      placeholder="Enter new password"
+                      autoComplete="new-password"
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label htmlFor="edit-user-confirm-pw">Confirm New Password</label>
+                    <input
+                      id="edit-user-confirm-pw"
+                      type="password"
+                      value={editUserConfirmPassword}
+                      onChange={(e) => setEditUserConfirmPassword(e.target.value)}
+                      placeholder="Confirm new password"
+                      autoComplete="new-password"
+                    />
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '16px' }}>
+                  <button type="button" className="btn-secondary" onClick={() => { setEditingUser(null); setEditUserMsg(null) }}>
+                    Cancel
+                  </button>
+                  <button type="submit" className="btn-primary" disabled={editUserSaving}>
+                    {editUserSaving ? 'Saving...' : 'Save Changes'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* LIBRARIAN ADD BOOK RECORD MODAL */}
       {isAddBookOpen && (
@@ -3622,7 +4023,7 @@ Chapter 2: Structural implementations..."
                     type="password"
                     value={newPasswordInput}
                     onChange={(e) => setNewPasswordInput(e.target.value)}
-                    placeholder="Enter new password (min 4 characters)"
+                    placeholder="Use 8+ characters, letters, number, and symbol"
                     required
                   />
                 </div>
@@ -3638,6 +4039,8 @@ Chapter 2: Structural implementations..."
                     required
                   />
                 </div>
+
+                <p className="password-requirements">Use 8+ characters with uppercase, lowercase, number, and special character.</p>
 
                 <button type="submit" className="btn-primary" disabled={changePasswordLoading} style={{ width: '100%', marginTop: '1rem' }}>
                   {changePasswordLoading ? 'Sending OTP...' : 'Send OTP Code to Mobile'} <ShieldCheck size={18} />
@@ -3721,7 +4124,7 @@ Chapter 2: Structural implementations..."
       {/* ENTRY / EXIT GATE PASS MODAL SCREEN */}
       {isGatePassModalOpen && (
         <div className="test-sms-modal-overlay" onClick={() => setIsGatePassModalOpen(false)}>
-          <div className="test-sms-modal-content" style={{ maxWidth: '640px' }} onClick={(e) => e.stopPropagation()}>
+          <div className="test-sms-modal-content gate-pass-modal-box" style={{ maxWidth: (currentUser?.role === 'Librarian' || currentUser?.role === 'Administrator') ? '980px' : '520px', width: '94vw', maxHeight: '90vh', overflowY: 'auto' }} onClick={(e) => e.stopPropagation()}>
             <div className="test-sms-header" style={{ marginBottom: '12px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <QrCode size={20} style={{ color: '#2dd4bf' }} />

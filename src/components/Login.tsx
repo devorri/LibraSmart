@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { authenticateUser, registerUser, queueNotification, sendSMSViaSemaphore } from '../lib/supabase'
+import { authenticateUser, registerUser, queueNotification, sendSMSViaSemaphore, findUserByUsername, getPasswordValidationError, hashPassword, updateUser } from '../lib/supabase'
 import type { User } from '../lib/supabase'
 import { UserCheck, Lock, User as UserIcon, Phone, BookOpen, GraduationCap, Eye, EyeOff, ShieldCheck, RefreshCcw } from 'lucide-react'
 
@@ -9,6 +9,7 @@ interface LoginProps {
 
 export function Login({ onLoginSuccess }: LoginProps) {
   const [isRegistering, setIsRegistering] = useState(false)
+  const [isResettingPassword, setIsResettingPassword] = useState(false)
   const [showOtpStep, setShowOtpStep] = useState(false)
   const [generatedOtp, setGeneratedOtp] = useState('')
   const [enteredOtp, setEnteredOtp] = useState('')
@@ -23,6 +24,12 @@ export function Login({ onLoginSuccess }: LoginProps) {
   const [successMsg, setSuccessMsg] = useState('')
   const [loading, setLoading] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
+  const [resetOtpStep, setResetOtpStep] = useState(false)
+  const [resetOtp, setResetOtp] = useState('')
+  const [generatedResetOtp, setGeneratedResetOtp] = useState('')
+  const [resetUserId, setResetUserId] = useState<number | null>(null)
+  const [resetPassword, setResetPassword] = useState('')
+  const [confirmResetPassword, setConfirmResetPassword] = useState('')
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -62,6 +69,13 @@ export function Login({ onLoginSuccess }: LoginProps) {
       return
     }
 
+    const passwordError = getPasswordValidationError(password)
+    if (passwordError) {
+      setErrorMsg(passwordError)
+      setLoading(false)
+      return
+    }
+
     let formattedPhone = phoneNumber.trim()
     if (formattedPhone.startsWith('09')) {
       formattedPhone = '+63' + formattedPhone.slice(1)
@@ -80,6 +94,59 @@ export function Login({ onLoginSuccess }: LoginProps) {
     setShowOtpStep(true)
     setSuccessMsg(`OTP verification code sent to ${formattedPhone} via SMS.`)
     setLoading(false)
+  }
+
+  const handleStartPasswordReset = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setErrorMsg('')
+    setSuccessMsg('')
+    setLoading(true)
+    const account = await findUserByUsername(username)
+    if (!account?.phone_number) {
+      setErrorMsg('We could not start a password reset for that username. Please contact the library administrator.')
+      setLoading(false)
+      return
+    }
+    const otp = Math.floor(100000 + Math.random() * 900000).toString()
+    setGeneratedResetOtp(otp)
+    setResetUserId(account.user_id)
+    await sendSMSViaSemaphore(account.phone_number, `LibraSmart OTP: Your password reset code is ${otp}. Do not share this code.`)
+    await queueNotification(account.user_id, account.phone_number, `LibraSmart OTP: Your password reset code is ${otp}. Do not share this code.`, 'Transaction')
+    setResetOtpStep(true)
+    setSuccessMsg(`A password-reset code was sent to ${account.phone_number}.`)
+    setLoading(false)
+  }
+
+  const handleCompletePasswordReset = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setErrorMsg('')
+    if (resetOtp.trim() !== generatedResetOtp || !resetUserId) {
+      setErrorMsg('Invalid verification code.')
+      return
+    }
+    if (resetPassword !== confirmResetPassword) {
+      setErrorMsg('New password and confirmation do not match.')
+      return
+    }
+    const passwordError = getPasswordValidationError(resetPassword)
+    if (passwordError) {
+      setErrorMsg(passwordError)
+      return
+    }
+    setLoading(true)
+    const updated = await updateUser(resetUserId, { password: await hashPassword(resetPassword) })
+    setLoading(false)
+    if (!updated) {
+      setErrorMsg('Unable to reset password. Please contact the library administrator.')
+      return
+    }
+    setSuccessMsg('Password reset successfully. Please sign in.')
+    setPassword('')
+    setResetOtp('')
+    setResetPassword('')
+    setConfirmResetPassword('')
+    setResetOtpStep(false)
+    setIsResettingPassword(false)
   }
 
   const handleVerifyOtpAndRegister = async (e: React.FormEvent) => {
@@ -145,7 +212,7 @@ export function Login({ onLoginSuccess }: LoginProps) {
         {errorMsg && <div className="login-alert error">{errorMsg}</div>}
         {successMsg && <div className="login-alert success">{successMsg}</div>}
 
-        {!isRegistering ? (
+        {!isRegistering && !isResettingPassword ? (
           <form onSubmit={handleLogin} className="login-form">
             <div className="form-group">
               <label htmlFor="username">
@@ -188,6 +255,10 @@ export function Login({ onLoginSuccess }: LoginProps) {
               {loading ? 'Signing in...' : 'Sign In'} <UserCheck size={18} />
             </button>
 
+            <button type="button" className="password-toggle forgot-password-link" onClick={() => { setIsResettingPassword(true); setErrorMsg(''); setSuccessMsg(''); }}>
+              Forgot password?
+            </button>
+
             <div className="login-toggle">
               Don't have an account?{' '}
               <button type="button" onClick={() => { setIsRegistering(true); setShowOtpStep(false); setErrorMsg(''); }}>
@@ -195,6 +266,28 @@ export function Login({ onLoginSuccess }: LoginProps) {
               </button>
             </div>
           </form>
+        ) : isResettingPassword ? (
+          !resetOtpStep ? (
+            <form onSubmit={handleStartPasswordReset} className="login-form">
+              <h3>Reset password</h3>
+              <p className="login-subtitle">Enter your username and we will send a verification code to its registered mobile number.</p>
+              <div className="form-group">
+                <label htmlFor="reset-username"><UserIcon size={16} /> Username</label>
+                <input id="reset-username" value={username} onChange={(e) => setUsername(e.target.value)} required />
+              </div>
+              <button type="submit" className="btn-primary login-btn" disabled={loading}>{loading ? 'Sending...' : 'Send reset code'} <ShieldCheck size={18} /></button>
+              <div className="login-toggle"><button type="button" onClick={() => setIsResettingPassword(false)}>Back to sign in</button></div>
+            </form>
+          ) : (
+            <form onSubmit={handleCompletePasswordReset} className="login-form">
+              <h3>Create a new password</h3>
+              <div className="form-group"><label htmlFor="reset-otp">6-Digit Verification Code</label><input id="reset-otp" value={resetOtp} onChange={(e) => setResetOtp(e.target.value)} maxLength={6} required /></div>
+              <div className="form-group"><label htmlFor="reset-password">New Password</label><input id="reset-password" type="password" value={resetPassword} onChange={(e) => setResetPassword(e.target.value)} required /></div>
+              <div className="form-group"><label htmlFor="reset-confirm-password">Confirm New Password</label><input id="reset-confirm-password" type="password" value={confirmResetPassword} onChange={(e) => setConfirmResetPassword(e.target.value)} required /></div>
+              <p className="password-requirements">Use 8+ characters with uppercase, lowercase, number, and special character.</p>
+              <button type="submit" className="btn-primary login-btn" disabled={loading}>{loading ? 'Updating...' : 'Reset password'} <Lock size={18} /></button>
+            </form>
+          )
         ) : showOtpStep ? (
           <form onSubmit={handleVerifyOtpAndRegister} className="login-form">
             <div className="otp-verification-box">
@@ -281,6 +374,7 @@ export function Login({ onLoginSuccess }: LoginProps) {
                 {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
                 {showPassword ? 'Hide password' : 'Show password'}
               </button>
+              <p className="password-requirements">Use 8+ characters with uppercase, lowercase, number, and special character.</p>
             </div>
 
             <div className="form-group">
