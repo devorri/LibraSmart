@@ -222,6 +222,9 @@ export async function findUserByUsername(username: string): Promise<Pick<User, '
 }
 
 export async function registerUser(user: Omit<User, 'user_id'>): Promise<User | null> {
+  if (user.password && getPasswordValidationError(user.password)) {
+    return null
+  }
   const hashedPassword = user.password ? await hashPassword(user.password) : undefined
   const userWithHash = { ...user, password: hashedPassword }
 
