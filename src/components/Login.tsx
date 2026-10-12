@@ -412,7 +412,15 @@ export function Login({ onLoginSuccess }: LoginProps) {
                   <select
                     id="reg-level"
                     value={academicLevel}
-                    onChange={(e) => setAcademicLevel(e.target.value)}
+                    onChange={(e) => {
+                      const selectedLevel = e.target.value
+                      setAcademicLevel(selectedLevel)
+                      if (['Grade 7', 'Grade 8', 'Grade 9', 'Grade 10'].includes(selectedLevel)) {
+                        setProgramStrand('Junior High School')
+                      } else if (programStrand === 'Junior High School') {
+                        setProgramStrand('ICT')
+                      }
+                    }}
                   >
                     <optgroup label="Junior High School">
                       <option value="Grade 7">Grade 7</option>
@@ -440,21 +448,35 @@ export function Login({ onLoginSuccess }: LoginProps) {
                   id="reg-strand"
                   value={programStrand}
                   onChange={(e) => setProgramStrand(e.target.value)}
+                  disabled={['Grade 7', 'Grade 8', 'Grade 9', 'Grade 10'].includes(academicLevel)}
                 >
-                  <optgroup label="SHS Strands (G11 - G12)">
-                    <option value="ICT">ICT (Information & Communications Technology)</option>
-                    <option value="SMAW">SMAW (Shielded Metal Arc Welding)</option>
-                    <option value="Automotive">Automotive Servicing</option>
-                    <option value="HUMSS">HUMSS (Humanities & Social Sciences)</option>
-                    <option value="Healthcare">Healthcare Services</option>
-                  </optgroup>
-                  <optgroup label="College Courses (1st - 2nd Year)">
-                    <option value="IT">IT / BS In Information Technology</option>
-                    <option value="Healthcare">Healthcare Course</option>
-                    <option value="SMAW">SMAW Course</option>
-                    <option value="Automotive">Automotive Course</option>
-                  </optgroup>
+                  {['Grade 7', 'Grade 8', 'Grade 9', 'Grade 10'].includes(academicLevel) ? (
+                    <optgroup label="Junior High School">
+                      <option value="Junior High School">Junior High School (JHS)</option>
+                    </optgroup>
+                  ) : (
+                    <>
+                      <optgroup label="SHS Strands (G11 - G12)">
+                        <option value="ICT">ICT (Information & Communications Technology)</option>
+                        <option value="SMAW">SMAW (Shielded Metal Arc Welding)</option>
+                        <option value="Automotive">Automotive Servicing</option>
+                        <option value="HUMSS">HUMSS (Humanities & Social Sciences)</option>
+                        <option value="Healthcare">Healthcare Services</option>
+                      </optgroup>
+                      <optgroup label="College Courses (1st - 2nd Year)">
+                        <option value="IT">IT / BS In Information Technology</option>
+                        <option value="Healthcare">Healthcare Course</option>
+                        <option value="SMAW">SMAW Course</option>
+                        <option value="Automotive">Automotive Course</option>
+                      </optgroup>
+                    </>
+                  )}
                 </select>
+                {['Grade 7', 'Grade 8', 'Grade 9', 'Grade 10'].includes(academicLevel) && (
+                  <small style={{ color: '#2dd4bf', fontSize: '0.78rem', marginTop: '4px', display: 'block' }}>
+                    Junior High School students have no specialized strand yet (automatically set to Junior High School).
+                  </small>
+                )}
               </div>
             )}
 

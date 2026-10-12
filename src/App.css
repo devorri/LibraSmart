@@ -33,6 +33,12 @@
   box-sizing: border-box;
 }
 
+html,
+body {
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
 @keyframes fluidFadeUp {
   from {
     opacity: 0;
@@ -1748,6 +1754,144 @@ h4 {
   margin: 0;
 }
 
+/* Student Records is a high-frequency librarian workspace: make each area easy to scan and operate. */
+.student-records-page {
+  max-width: 1540px;
+  margin-inline: auto;
+}
+
+.student-records-page > .panel-card-header {
+  margin-bottom: 24px;
+}
+
+.student-records-page > .panel-card-header .panel-title h3 {
+  font-size: 1.35rem;
+}
+
+.student-records-page > .panel-card-header .panel-subtitle {
+  font-size: 1rem;
+}
+
+.student-records-grid {
+  grid-template-columns: minmax(440px, 0.92fr) minmax(500px, 1.08fr);
+  gap: 24px;
+  margin-top: 0;
+  align-items: start;
+}
+
+.student-record-create,
+.student-record-list {
+  padding: 28px;
+  border-color: rgba(56, 189, 248, 0.26);
+}
+
+.student-record-section-heading {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding-bottom: 18px;
+  margin-bottom: 20px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.student-record-section-icon {
+  width: 46px;
+  height: 46px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  color: #06232a;
+  background: #2dd4bf;
+  border-radius: 12px;
+  box-shadow: 0 6px 18px rgba(45, 212, 191, 0.25);
+}
+
+.student-record-section-heading h4,
+.student-record-list h4 {
+  font-size: 1.2rem;
+}
+
+.student-record-section-heading p {
+  margin: 4px 0 0;
+  color: #cbd5e1;
+  font-size: 0.92rem;
+  line-height: 1.45;
+}
+
+.student-records-page .admin-form {
+  gap: 18px;
+}
+
+.student-records-page .form-group label {
+  color: #e2e8f0;
+  font-size: 0.92rem;
+  font-weight: 750;
+}
+
+.student-records-page input,
+.student-records-page select {
+  min-height: 46px;
+  font-size: 0.96rem;
+}
+
+.student-records-page .admin-form > .btn-primary {
+  min-height: 48px;
+  font-size: 1rem;
+}
+
+.student-record-checkout {
+  padding: 22px;
+  margin-top: 28px;
+  border: 1px solid rgba(45, 212, 191, 0.25);
+  border-radius: 14px;
+  background: rgba(15, 117, 129, 0.12);
+}
+
+.student-record-checkout h4 {
+  color: #ffffff;
+  font-size: 1.1rem;
+}
+
+.student-record-list .user-list {
+  max-height: 730px;
+  overflow-y: auto;
+  padding-right: 6px;
+}
+
+.student-record-list .user-list-item {
+  padding: 16px;
+  border-color: rgba(255, 255, 255, 0.18);
+}
+
+.student-record-list .user-list-item strong {
+  font-size: 1rem;
+}
+
+@media (max-width: 1250px) {
+  .student-records-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .student-record-list .user-list {
+    max-height: none;
+  }
+}
+
+@media (max-width: 600px) {
+  .student-record-create,
+  .student-record-list {
+    padding: 18px;
+  }
+
+  .student-record-section-heading {
+    align-items: flex-start;
+  }
+
+  .student-records-page .form-row-2 {
+    grid-template-columns: 1fr;
+  }
+}
+
 .panel-card-header,
 .panel-header,
 .card-header {
@@ -2121,13 +2265,14 @@ h4 {
 .analytics-stats-row {
   margin-top: 14px;
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 16px;
 }
 
 .analytics-stat-card {
-  padding: 16px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  min-height: 92px;
+  padding: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
   border-radius: var(--radius-md);
   background: rgba(10, 18, 26, 0.45);
   backdrop-filter: blur(10px);
@@ -2144,8 +2289,8 @@ h4 {
 }
 
 .stat-icon-ring {
-  width: 44px;
-  height: 44px;
+  width: 52px;
+  height: 52px;
   border-radius: 50%;
   display: grid;
   place-items: center;
@@ -2187,39 +2332,39 @@ h4 {
 }
 
 .stat-value {
-  font-size: 1.5rem;
+  font-size: 2rem;
   font-weight: 850;
   color: #ffffff;
   line-height: 1.1;
 }
 
 .stat-label {
-  font-size: 0.78rem;
-  color: #cbd5e1;
+  font-size: 0.92rem;
+  color: #e2e8f0;
   font-weight: 650;
   white-space: nowrap;
 }
 
 .analytics-bar-chart {
   display: grid;
-  gap: 12px;
+  gap: 16px;
 }
 
 .bar-chart-row {
   display: grid;
-  grid-template-columns: 60px minmax(0, 1fr) 34px;
+  grid-template-columns: minmax(130px, 0.45fr) minmax(120px, 1fr) 42px;
   align-items: center;
   gap: 12px;
 }
 
 .bar-label {
-  font-size: 0.8rem;
+  font-size: 0.95rem;
   font-weight: 800;
   color: #cbd5e1;
 }
 
 .bar-track {
-  height: 10px;
+  height: 16px;
   border-radius: var(--radius-pill);
   background: rgba(255, 255, 255, 0.08);
   border: 1px solid rgba(255, 255, 255, 0.12);
@@ -2233,7 +2378,7 @@ h4 {
 }
 
 .bar-value {
-  font-size: 0.84rem;
+  font-size: 1rem;
   font-weight: 800;
   color: #ffffff;
   text-align: right;
@@ -2245,7 +2390,7 @@ h4 {
   padding-top: 14px;
   border-top: 1px solid var(--color-border);
   color: var(--color-text-muted);
-  font-size: 0.84rem;
+  font-size: 0.96rem;
 }
 
 .donut-chart-layout {
@@ -2254,6 +2399,11 @@ h4 {
   gap: 26px;
   flex-wrap: wrap;
   justify-content: center;
+}
+
+.donut-svg {
+  width: 210px;
+  height: 210px;
 }
 
 .donut-legend {
@@ -2270,8 +2420,8 @@ h4 {
 }
 
 .legend-color-dot {
-  width: 11px;
-  height: 11px;
+  width: 14px;
+  height: 14px;
   border-radius: 50%;
   flex-shrink: 0;
 }
@@ -2282,14 +2432,55 @@ h4 {
 }
 
 .legend-title {
-  font-size: 0.86rem;
+  font-size: 1rem;
   font-weight: 800;
   color: #ffffff;
 }
 
 .legend-count {
-  font-size: 0.78rem;
-  color: #94a3b8;
+  font-size: 0.9rem;
+  color: #cbd5e1;
+}
+
+/* Keep analytics readable from a distance and on lower-resolution displays. */
+.analytics-card-grid .panel-title h3 {
+  font-size: 1.22rem;
+}
+
+.analytics-card-grid .panel-card {
+  padding: 24px;
+}
+
+.analytics-card-grid .demand-row {
+  padding: 14px;
+}
+
+.analytics-card-grid .demand-info strong {
+  font-size: 1rem;
+}
+
+.analytics-card-grid .demand-info small,
+.analytics-card-grid .demand-count {
+  font-size: 0.88rem;
+}
+
+.activity-timeline .timeline-item {
+  min-height: 76px;
+  background: rgba(12, 22, 32, 0.72) !important;
+  border-color: rgba(255, 255, 255, 0.16) !important;
+}
+
+.activity-timeline .timeline-item strong {
+  font-size: 1rem !important;
+}
+
+.activity-timeline .timeline-item > div > div > div:last-child {
+  font-size: 0.92rem !important;
+}
+
+.activity-timeline .timeline-item > div:last-child span:last-child {
+  font-size: 0.82rem !important;
+  color: #cbd5e1 !important;
 }
 
 .demand-list {
@@ -3739,6 +3930,19 @@ h4 {
   .sms-trigger-label {
     display: none;
   }
+
+  .analytics-card-grid .panel-card {
+    padding: 18px;
+  }
+
+  .bar-chart-row {
+    grid-template-columns: minmax(105px, 0.65fr) minmax(80px, 1fr) 34px;
+    gap: 8px;
+  }
+
+  .bar-label {
+    font-size: 0.86rem;
+  }
 }
 
 @media (max-width: 480px) {
@@ -3805,6 +4009,50 @@ h4 {
 
   .phone-device {
     width: 100%;
+  }
+}
+
+/* Small-screen library desk: retain all actions without forcing horizontal page scrolling. */
+@media (max-width: 600px) {
+  .sidebar {
+    padding: 14px 12px;
+  }
+
+  .sidebar nav {
+    margin-top: 14px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  .sidebar nav button {
+    min-height: 40px;
+    padding: 8px;
+    justify-content: center;
+    font-size: 0.78rem;
+    gap: 6px;
+  }
+
+  .side-profile {
+    margin-top: 14px;
+  }
+
+  .table-container {
+    width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .premium-table {
+    min-width: 640px;
+  }
+
+  .student-overview-gatepass-banner {
+    padding: 14px !important;
+  }
+
+  .student-overview-gatepass-banner .btn-primary {
+    width: 100%;
+    justify-content: center;
   }
 }
 
@@ -4278,9 +4526,103 @@ h4 {
   align-items: start;
 }
 
+/* The fixed gate QR is meant to be scanned at a distance, not treated like a small form control. */
+.stationary-gate-layout {
+  grid-template-columns: minmax(470px, 0.9fr) minmax(500px, 1.1fr) !important;
+  gap: 28px !important;
+}
+
+.stationary-qr-panel,
+.stationary-gate-layout .gate-history {
+  padding: 28px !important;
+}
+
+.stationary-qr-panel .panel-header h3 {
+  font-size: 1.32rem;
+}
+
+.stationary-qr-container {
+  padding: 24px 0 28px;
+}
+
+.stationary-qr-frame {
+  width: min(100%, 440px) !important;
+  aspect-ratio: 1;
+  height: auto !important;
+  background: #ffffff !important;
+  border: 12px solid #ffffff !important;
+  border-radius: 20px !important;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.32) !important;
+}
+
+.stationary-qr-frame .qr-code-svg {
+  width: 88%;
+  height: 88%;
+}
+
+.stationary-qr-instructions {
+  max-width: 46ch;
+  margin: 0 auto;
+  padding: 0 12px 10px;
+  text-align: center;
+  color: var(--color-text-muted);
+  font-size: 1rem;
+  line-height: 1.6;
+}
+
+.stationary-qr-instructions p:first-child {
+  margin: 0 0 8px;
+  color: #ffffff;
+  font-size: 1.12rem;
+  font-weight: 800;
+}
+
+.stationary-gate-layout .feed-title {
+  font-size: 1.22rem;
+}
+
+.stationary-gate-layout .feed-subtitle {
+  font-size: 0.9rem;
+}
+
+.stationary-gate-layout .logs-feed-container {
+  max-height: 620px !important;
+}
+
+@media (max-width: 1250px) {
+  .stationary-gate-layout {
+    grid-template-columns: 1fr !important;
+  }
+
+  .stationary-gate-layout .gate-history {
+    max-width: 760px;
+    width: 100%;
+    margin: 0 auto;
+  }
+}
+
 @media (max-width: 860px) {
   .qr-grid {
     grid-template-columns: 1fr !important;
+  }
+
+  .stationary-gate-layout .gate-history {
+    padding: 20px !important;
+  }
+}
+
+@media (max-width: 520px) {
+  .stationary-qr-panel {
+    padding: 20px !important;
+  }
+
+  .stationary-qr-frame {
+    width: min(100%, 330px) !important;
+    border-width: 8px !important;
+  }
+
+  .stationary-gate-layout .panel-header-clean {
+    align-items: stretch;
   }
 }
 

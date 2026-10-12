@@ -4,7 +4,7 @@ import autoTable from 'jspdf-autotable'
 import { Login } from './components/Login'
 import { EbookReader } from './components/EbookReader'
 import { QRManager } from './components/QRManager'
-import type { User, Book, Transaction, TrashRecord } from './lib/supabase'
+import type { User, Book, Transaction, TrashRecord, LibraryLog } from './lib/supabase'
 import './App.css'
 import {
   fetchBooks,
@@ -30,7 +30,9 @@ import {
   updateUser,
   uploadEbookFile,
   hashPassword,
-  getPasswordValidationError
+  getPasswordValidationError,
+  fetchLibraryLogs,
+  findUserByUsername
 } from './lib/supabase'
 
 import {
@@ -91,10 +93,31 @@ const createExternalBookId = (key: string) => {
   return -Math.max(1, hash)
 }
 
+const SESSION_KEY = 'librasmart_active_session'
+const VIEW_KEY = 'librasmart_current_view'
+
 export default function App() {
-  // Session State
-  const [currentUser, setCurrentUser] = useState<User | null>(null)
-  const [view, setView] = useState<View>('storefront')
+  // Session State (Persisted in localStorage across page reloads & mobile pull-to-refresh)
+  const [currentUser, setCurrentUser] = useState<User | null>(() => {
+    try {
+      const saved = localStorage.getItem(SESSION_KEY)
+      return saved ? JSON.parse(saved) : null
+    } catch {
+      return null
+    }
+  })
+  const [view, setView] = useState<View>(() => {
+    try {
+      const savedUser = localStorage.getItem(SESSION_KEY)
+      const savedView = localStorage.getItem(VIEW_KEY)
+      if (savedUser && savedView) {
+        return savedView as View
+      }
+      return savedUser ? 'overview' : 'storefront'
+    } catch {
+      return 'storefront'
+    }
+  })
   const [showLoginModal, setShowLoginModal] = useState(false)
   const [storeTab, setStoreTab] = useState<'home' | 'catalog'>('home')
 
@@ -127,6 +150,7 @@ export default function App() {
   // Change Password Modal State
   const [isChangePasswordOpen, setIsChangePasswordOpen] = useState(false)
   const [profileName, setProfileName] = useState('')
+  const [profileUsername, setProfileUsername] = useState('')
   const [profilePhone, setProfilePhone] = useState('')
   const [profileRole, setProfileRole] = useState<'Student' | 'Teacher'>('Student')
   const [profileAcademicLevel, setProfileAcademicLevel] = useState('1st Year')
@@ -154,8 +178,10 @@ export default function App() {
   const [userListFilter, setUserListFilter] = useState('')
   const [userListRoleFilter, setUserListRoleFilter] = useState<'All' | 'Student' | 'Teacher' | 'Librarian' | 'Administrator'>('All')
 
-  // Interaction/Simulations States
-  const [query, setQuery] = useState('')
+  // A search follows the member between the storefront and catalog.
+  const [storefrontQuery, setStorefrontQuery] = useState('')
+  const [catalogQuery, setCatalogQuery] = useState('')
+  const [userReportRoleFilter, setUserReportRoleFilter] = useState<'All' | 'Student' | 'Teacher'>('All')
   const [isGatePassModalOpen, setIsGatePassModalOpen] = useState(false)
   const [selectedCategory, setSelectedCategory] = useState('All')
   const [catalogRelevance, setCatalogRelevance] = useState('All')
@@ -173,7 +199,7 @@ export default function App() {
   const [newBookTitle, setNewBookTitle] = useState('')
   const [newBookAuthor, setNewBookAuthor] = useState('')
   const [newBookIsbn, setNewBookIsbn] = useState('')
-  const [newBookCategory, setNewBookCategory] = useState('Information Technology')
+  const [newBookCategory, setNewBookCategory] = useState('')
   const [newBookRelevance, setNewBookRelevance] = useState('Grade 7')
   const [newBookStatus, setNewBookStatus] = useState<'Available' | 'E-book'>('Available')
   const [newBookContent, setNewBookContent] = useState('')
@@ -181,7 +207,7 @@ export default function App() {
   const [newBookCoverFile, setNewBookCoverFile] = useState<File | null>(null)  // new upload file
   const [newBookCoverPreview, setNewBookCoverPreview] = useState<string>('')   // local preview
   const [isUploadingCover, setIsUploadingCover] = useState(false)
-  const [newBookTotalCopies, setNewBookTotalCopies] = useState<number>(1)
+  const [newBookTotalCopies, setNewBookTotalCopies] = useState<number | string>('')
   const [editingBookId, setEditingBookId] = useState<number | null>(null)
 
   // Profile photo upload
@@ -219,14 +245,45 @@ export default function App() {
     setView(resolvedView)
   }
 
+  const updateBookSearch = (query: string) => {
+    // Keep both book discovery surfaces in sync, including their online results.
+    setStorefrontQuery(query)
+    setCatalogQuery(query)
+  }
+
+  // Synchronize active session to localStorage so refreshes keep user logged in
+  useEffect(() => {
+    if (currentUser) {
+      try {
+        localStorage.setItem(SESSION_KEY, JSON.stringify(currentUser))
+      } catch (err) {
+        console.error('Failed to save session:', err)
+      }
+    } else {
+      localStorage.removeItem(SESSION_KEY)
+      localStorage.removeItem(VIEW_KEY)
+    }
+  }, [currentUser])
+
+  useEffect(() => {
+    if (currentUser && view) {
+      try {
+        localStorage.setItem(VIEW_KEY, view)
+      } catch (err) {
+        console.error('Failed to save view:', err)
+      }
+    }
+  }, [currentUser, view])
+
   useEffect(() => {
     if (!currentUser) return
     const syncProfile = window.setTimeout(() => {
       setProfileName(currentUser.name || '')
+      setProfileUsername(currentUser.username || '')
       setProfilePhone(currentUser.phone_number || '')
       setProfileRole(currentUser.role === 'Teacher' ? 'Teacher' : 'Student')
       setProfileAcademicLevel(currentUser.academic_level || '1st Year')
-      setProfileProgramStrand(currentUser.program_strand || 'ICT')
+      setProfileProgramStrand(currentUser.program_strand || (['Grade 7', 'Grade 8', 'Grade 9', 'Grade 10'].includes(currentUser.academic_level || '') ? 'Junior High School' : 'ICT'))
     }, 0)
     return () => window.clearTimeout(syncProfile)
   }, [currentUser])
@@ -241,6 +298,22 @@ export default function App() {
     setProfileSaving(true)
     setProfileMsg(null)
 
+    const cleanedUsername = (profileUsername || currentUser.username).toLowerCase().trim()
+    if (!cleanedUsername) {
+      setProfileMsg({ type: 'error', text: 'Username is required.' })
+      setProfileSaving(false)
+      return
+    }
+
+    if (cleanedUsername !== currentUser.username) {
+      const existingUser = await findUserByUsername(cleanedUsername)
+      if (existingUser && existingUser.user_id !== currentUser.user_id) {
+        setProfileMsg({ type: 'error', text: 'Username is already taken by another account. Please choose another.' })
+        setProfileSaving(false)
+        return
+      }
+    }
+
     let formattedPhone = profilePhone.trim()
     if (formattedPhone.startsWith('09')) {
       formattedPhone = '+63' + formattedPhone.slice(1)
@@ -248,12 +321,13 @@ export default function App() {
       formattedPhone = '+63' + formattedPhone
     }
 
-    const updates = {
+    const updates: Partial<User> = {
       name: profileName.trim(),
+      username: cleanedUsername,
       phone_number: formattedPhone,
       role: profileRole,
       academic_level: profileAcademicLevel,
-      program_strand: profileProgramStrand
+      program_strand: ['Grade 7', 'Grade 8', 'Grade 9', 'Grade 10'].includes(profileAcademicLevel) ? 'Junior High School' : profileProgramStrand
     }
 
     const updated = await updateUser(currentUser.user_id, updates)
@@ -372,6 +446,12 @@ export default function App() {
 
   // Handle Log Out
   const handleLogout = () => {
+    try {
+      localStorage.removeItem(SESSION_KEY)
+      localStorage.removeItem(VIEW_KEY)
+    } catch (err) {
+      console.error(err)
+    }
     setCurrentUser(null)
     setView('storefront')
     setStoreTab('home')
@@ -496,14 +576,14 @@ export default function App() {
     setNewBookTitle('')
     setNewBookAuthor('')
     setNewBookIsbn('')
-    setNewBookCategory('Information Technology')
+    setNewBookCategory('')
     setNewBookRelevance('Grade 7')
     setNewBookStatus('Available')
     setNewBookContent('')
     setNewBookCoverUrl('')
     setNewBookCoverFile(null)
     setNewBookCoverPreview('')
-    setNewBookTotalCopies(1)
+    setNewBookTotalCopies('')
     setNewBookEbookFile(null)
     setNewBookEbookUrl('')
     if (coverFileInputRef.current) coverFileInputRef.current.value = ''
@@ -535,14 +615,18 @@ export default function App() {
 
   const handleSaveBook = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!newBookTitle || !newBookAuthor || !newBookIsbn) return
+    if (!newBookTitle || !newBookAuthor) {
+      alert('Please enter at least Title and Author.')
+      return
+    }
+    const finalIsbn = newBookIsbn.trim() || `ACC-${Date.now().toString().slice(-6)}-${Math.floor(100 + Math.random() * 900)}`
 
     let finalCoverUrl = newBookCoverUrl || null
 
     // If the admin selected a new cover file, upload it first
-    if (newBookCoverFile && newBookIsbn) {
+    if (newBookCoverFile) {
       setIsUploadingCover(true)
-      const uploaded = await uploadBookCover(newBookCoverFile, newBookIsbn)
+      const uploaded = await uploadBookCover(newBookCoverFile, finalIsbn)
       setIsUploadingCover(false)
       if (uploaded) {
         finalCoverUrl = uploaded
@@ -552,8 +636,9 @@ export default function App() {
       }
     }
 
-    const totalCopies = newBookTotalCopies
-    let availableCopies = newBookTotalCopies
+    const parsedCopies = typeof newBookTotalCopies === 'number' ? newBookTotalCopies : (parseInt(String(newBookTotalCopies), 10) || 1)
+    const totalCopies = Math.max(1, parsedCopies)
+    let availableCopies = totalCopies
 
     if (editingBookId) {
       const existingBook = books.find(b => b.book_id === editingBookId)
@@ -566,9 +651,9 @@ export default function App() {
     let finalEbookUrl = newBookStatus === 'E-book' ? newBookEbookUrl : null
 
     // If the admin selected a new ebook file, upload it
-    if (newBookStatus === 'E-book' && newBookEbookFile && newBookIsbn) {
+    if (newBookStatus === 'E-book' && newBookEbookFile) {
       setIsUploadingEbook(true)
-      const uploaded = await uploadEbookFile(newBookEbookFile, newBookIsbn)
+      const uploaded = await uploadEbookFile(newBookEbookFile, finalIsbn)
       setIsUploadingEbook(false)
       if (uploaded) {
         finalEbookUrl = uploaded
@@ -581,7 +666,7 @@ export default function App() {
     const bookPayload = {
       title: newBookTitle,
       author: newBookAuthor,
-      isbn: newBookIsbn,
+      isbn: finalIsbn,
       category: newBookCategory,
       program_strand_relevance: newBookRelevance,
       status: (newBookStatus === 'E-book' ? 'E-book' : (availableCopies === 0 ? 'Borrowed' : 'Available')) as 'Available' | 'Borrowed' | 'E-book',
@@ -1056,28 +1141,38 @@ export default function App() {
   }, [books])
 
   // -------------------------------------------------------------
-  // SEARCH & CATEGORY FILTERING (Combined)
+  // SEARCH & CATEGORY FILTERING
   // -------------------------------------------------------------
-  const filteredBooks = useMemo(() => {
+  const storefrontBooks = useMemo(() => {
     return books.filter((book) => {
       const matchSearch = 
-        book.title.toLowerCase().includes(query.toLowerCase()) ||
-        book.author.toLowerCase().includes(query.toLowerCase()) ||
-        book.isbn.toLowerCase().includes(query.toLowerCase()) ||
-        book.category.toLowerCase().includes(query.toLowerCase()) ||
-        (book.program_strand_relevance && book.program_strand_relevance.toLowerCase().includes(query.toLowerCase()))
+        book.title.toLowerCase().includes(storefrontQuery.toLowerCase()) ||
+        book.author.toLowerCase().includes(storefrontQuery.toLowerCase()) ||
+        book.isbn.toLowerCase().includes(storefrontQuery.toLowerCase()) ||
+        book.category.toLowerCase().includes(storefrontQuery.toLowerCase()) ||
+        (book.program_strand_relevance && book.program_strand_relevance.toLowerCase().includes(storefrontQuery.toLowerCase()))
       
       const matchCategory = selectedCategory === 'All' || book.category === selectedCategory
-      
       return matchSearch && matchCategory
     })
-  }, [books, query, selectedCategory])
+  }, [books, storefrontQuery, selectedCategory])
 
   const catalogBooks = useMemo(() => {
     const [sortField, sortDirection] = catalogSort.split('-')
     const direction = sortDirection === 'desc' ? -1 : 1
 
-    return filteredBooks
+    return books
+      .filter((book) => {
+        const matchSearch =
+          book.title.toLowerCase().includes(catalogQuery.toLowerCase()) ||
+          book.author.toLowerCase().includes(catalogQuery.toLowerCase()) ||
+          book.isbn.toLowerCase().includes(catalogQuery.toLowerCase()) ||
+          book.category.toLowerCase().includes(catalogQuery.toLowerCase()) ||
+          (book.program_strand_relevance && book.program_strand_relevance.toLowerCase().includes(catalogQuery.toLowerCase()))
+
+        const matchCategory = selectedCategory === 'All' || book.category === selectedCategory
+        return matchSearch && matchCategory
+      })
       .filter((book) => catalogRelevance === 'All' || (book.program_strand_relevance || 'General') === catalogRelevance)
       .filter((book) => catalogAvailability === 'All' || book.status === catalogAvailability)
       .slice()
@@ -1098,10 +1193,12 @@ export default function App() {
         const [left, right] = values[sortField] || values.title
         return left.localeCompare(right, undefined, { sensitivity: 'base' }) * direction
       })
-  }, [filteredBooks, catalogAvailability, catalogRelevance, catalogSort])
+  }, [books, catalogAvailability, catalogQuery, catalogRelevance, catalogSort, selectedCategory])
+
+  const activeExternalTerm = (view === 'catalog' ? catalogQuery : storefrontQuery).trim()
 
   const externalSearchLinks = useMemo(() => {
-    const term = query.trim()
+    const term = activeExternalTerm
     if (!term) return []
 
     const encoded = encodeURIComponent(term)
@@ -1119,10 +1216,10 @@ export default function App() {
         url: `https://www.worldcat.org/search?q=${encoded}`
       }
     ]
-  }, [query])
+  }, [activeExternalTerm])
 
-  const hasExternalSearchTerm = query.trim().length > 0
-  const visibleExternalSearchTerm = query.trim()
+  const hasExternalSearchTerm = activeExternalTerm.length > 0
+  const visibleExternalSearchTerm = activeExternalTerm
   const hasCurrentExternalSearch = externalSearchQuery === visibleExternalSearchTerm
   const visibleExternalBookResults = hasExternalSearchTerm && hasCurrentExternalSearch ? externalBookResults : []
   const visibleExternalSearchStatus = !hasExternalSearchTerm
@@ -1133,7 +1230,7 @@ export default function App() {
   const visibleExternalSearchMessage = hasExternalSearchTerm && hasCurrentExternalSearch ? externalSearchMessage : ''
 
   useEffect(() => {
-    const term = query.trim()
+    const term = activeExternalTerm
 
     if (!term) {
       return
@@ -1234,7 +1331,7 @@ export default function App() {
       controller.abort()
       window.clearTimeout(timer)
     }
-  }, [query])
+  }, [activeExternalTerm])
 
   // Get cover graphic class based on index
   const getCoverClass = (index: number) => {
@@ -1253,27 +1350,24 @@ export default function App() {
   // ANALYTICS DATA COMPUTATIONS
   // -------------------------------------------------------------
   const analyticsData = useMemo(() => {
-    const strandBorrows: Record<string, number> = { BSIT: 0, BSA: 0, BSBA: 0, BSED: 0, SHS: 0 }
+    const strandBorrows: Record<string, number> = {}
     let totalBorrows = 0
     let overdueCount = 0
     let physicalBorrowed = 0
-    let ebookReads = 0
+    const actualEbookCount = books.filter(b => b.status === 'E-book').length
 
     transactions.forEach((t) => {
       totalBorrows++
       if (t.status === 'Overdue') overdueCount++
       if (t.status === 'Borrowed') physicalBorrowed++
 
-      const strand = t.users?.program_strand || ''
-      if (strand.toUpperCase().includes('BSIT')) strandBorrows.BSIT++
-      else if (strand.toUpperCase().includes('BSA')) strandBorrows.BSA++
-      else if (strand.toUpperCase().includes('BSBA')) strandBorrows.BSBA++
-      else if (strand.toUpperCase().includes('BSED')) strandBorrows.BSED++
-      else if (strand.toUpperCase().includes('GRADE')) strandBorrows.SHS++
-    })
-
-    books.forEach(b => {
-      if (b.status === 'E-book') ebookReads += 12
+      const level = t.users?.academic_level || ''
+      const rawStrand = t.users?.program_strand || ''
+      // JHS is consistently one group; every other label stays exactly as stored in the system.
+      const strand = ['Grade 7', 'Grade 8', 'Grade 9', 'Grade 10'].includes(level) || /junior high|\bjhs\b/i.test(rawStrand)
+        ? 'Junior High School'
+        : rawStrand || (level === 'Faculty' ? 'Faculty' : 'Unspecified')
+      strandBorrows[strand] = (strandBorrows[strand] || 0) + 1
     })
 
     return {
@@ -1281,9 +1375,9 @@ export default function App() {
       totalBorrows,
       overdueCount,
       physicalBorrowed,
-      ebookReads,
+      ebookReads: actualEbookCount, // FIXED: Accurate count of digitized e-books
       availableBooks: books.filter(b => b.status === 'Available').length,
-      ebookBooks: books.filter(b => b.status === 'E-book').length,
+      ebookBooks: actualEbookCount,
       requestedCount: transactions.filter(t => t.status === 'Requested').length,
       returnedCount: transactions.filter(t => t.status === 'Returned').length,
       totalBooks: books.length
@@ -1354,7 +1448,13 @@ export default function App() {
   // -------------------------------------------------------------
   // EXPORTABLE REPORTS (PDF Generator)
   // -------------------------------------------------------------
-  const handleExportPDF = (reportType: 'books' | 'transactions' | 'overdue' | 'users') => {
+  const handleExportPDF = async (reportType: 'books' | 'transactions' | 'overdue' | 'users' | 'gate_logs') => {
+    // Always read a new snapshot so reports include accounts or records just created by staff.
+    const [reportBooks, reportTransactions, reportUsers] = await Promise.all([
+      fetchBooks(),
+      fetchTransactions(),
+      fetchAllUsers()
+    ])
     let headers: string[] = []
     let rows: string[][] = []
     const filename = `MPCI_Library_${reportType}_Report.pdf`
@@ -1362,20 +1462,20 @@ export default function App() {
       books: 'LIST OF BOOKS',
       transactions: 'BORROWED BOOKS AND TRANSACTIONS',
       overdue: 'OVERDUE BOOKS AND SMS FOLLOW-UP',
-      users: 'USER ACTIVITY DIRECTORY'
+      users: userReportRoleFilter === 'All' ? 'USER ACTIVITY DIRECTORY' : `USER ACTIVITY DIRECTORY (${userReportRoleFilter.toUpperCase()}S ONLY)`,
+      gate_logs: 'STUDENT & FACULTY GATE ENTRY / EXIT ATTENDANCE'
     }
 
     if (reportType === 'books') {
-      // Matches the supplied inventory template. Copyright date is intentionally excluded.
       headers = ['TITLE', 'AUTHOR/S', 'COPIES']
-      rows = books.map(b => [
+      rows = reportBooks.map(b => [
         b.title,
         b.author,
         b.status === 'E-book' ? 'Digital' : `${b.available_copies ?? 0} / ${b.total_copies ?? 1}`
       ])
     } else if (reportType === 'transactions') {
       headers = ['Transaction ID', 'Student', 'Book Title', 'Borrow Date', 'Due Date', 'Return Date', 'Status']
-      rows = transactions.map(t => [
+      rows = reportTransactions.map(t => [
         t.transaction_id.toString(),
         t.users?.name || 'Unknown',
         t.books?.title || 'Unknown',
@@ -1386,7 +1486,7 @@ export default function App() {
       ])
     } else if (reportType === 'overdue') {
       headers = ['Transaction ID', 'Borrower', 'Book Title', 'Program/Strand', 'Academic Level', 'Due Date', 'Notification Status']
-      rows = transactions
+      rows = reportTransactions
         .filter(t => t.status === 'Overdue')
         .map(t => [
           t.transaction_id.toString(),
@@ -1398,19 +1498,54 @@ export default function App() {
           'Overdue SMS ready'
         ])
     } else if (reportType === 'users') {
-      headers = ['User ID', 'Name', 'Username', 'Role', 'Strand/Department', 'Level', 'Phone Number']
-      rows = transactions
-        .map(t => t.users)
-        .filter((u, index, self) => u && self.findIndex(s => s?.username === u?.username) === index)
-        .map(u => [
-          u?.username || '',
-          u?.name || '',
-          u?.username || '',
-          'Student/Teacher',
-          u?.program_strand || 'General',
-          u?.academic_level || 'N/A',
-          u?.phone_number || ''
-        ])
+      headers = ['User ID', 'Full Name', 'Username', 'Role', 'Strand / Course', 'Academic Level', 'Mobile Number']
+      const targetUsers = reportUsers.filter((u) => {
+        if (userReportRoleFilter === 'Student') return u.role === 'Student'
+        if (userReportRoleFilter === 'Teacher') return u.role === 'Teacher'
+        return true
+      })
+      rows = targetUsers.map(u => [
+        String(u.user_id),
+        u.name || 'Unnamed',
+        u.username,
+        u.role,
+        u.program_strand || 'General',
+        u.academic_level || 'N/A',
+        u.phone_number || 'N/A'
+      ])
+    } else if (reportType === 'gate_logs') {
+      headers = ['Week', 'Log ID', 'User Name', 'Role', 'Strand / Course', 'Gate Action', 'Date & Time Recorded']
+      let logs: LibraryLog[] = []
+      try {
+        logs = await fetchLibraryLogs()
+      } catch (err) {
+        console.error('Failed to load gate logs:', err)
+      }
+      const startOfWeek = (value: string) => {
+        const date = new Date(value)
+        date.setHours(0, 0, 0, 0)
+        date.setDate(date.getDate() - ((date.getDay() + 6) % 7))
+        return date
+      }
+      rows = logs.map(l => {
+        const weekStart = startOfWeek(l.timestamp)
+        const weekEnd = new Date(weekStart)
+        weekEnd.setDate(weekEnd.getDate() + 6)
+        return [
+        `${weekStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}–${weekEnd.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`,
+        String(l.log_id),
+        l.users?.name || `User #${l.user_id}`,
+        l.users?.role || 'Student',
+        l.users?.program_strand || 'N/A',
+        l.type.toUpperCase(),
+        new Date(l.timestamp).toLocaleString('en-US', {
+          month: 'short',
+          day: 'numeric',
+          year: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit'
+        })
+      ]})
     }
 
     const pdf = new jsPDF({
@@ -1433,7 +1568,7 @@ export default function App() {
     pdf.text(reportTitles[reportType], pageWidth / 2, 36, { align: 'center' })
 
     if (reportType === 'books') {
-      const booksByCategory = books.reduce<Record<string, Book[]>>((groups, book) => {
+      const booksByCategory = reportBooks.reduce<Record<string, Book[]>>((groups, book) => {
         const category = book.category || 'UNCATEGORIZED'
         groups[category] = [...(groups[category] || []), book]
         return groups
@@ -1522,16 +1657,6 @@ export default function App() {
               <div className="connection-pulse"></div>
               <span>{isUsingMock() ? 'Offline Mode' : 'Online'}</span>
             </div>
-
-            {currentUser && (
-              <button
-                className="btn-secondary"
-                onClick={() => setIsGatePassModalOpen(true)}
-                style={{ padding: '6px 12px', fontSize: '0.82rem', color: '#2dd4bf', borderColor: 'rgba(45, 212, 191, 0.4)', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
-              >
-                <QrCode size={16} /> Gate Pass
-              </button>
-            )}
 
             {currentUser ? (
               <button className="btn-primary" onClick={() => navigateToView('overview')}>
@@ -1701,8 +1826,8 @@ export default function App() {
                     <Search size={20} />
                     <input 
                       type="text" 
-                      value={query}
-                      onChange={(e) => setQuery(e.target.value)}
+                      value={storefrontQuery}
+                      onChange={(e) => updateBookSearch(e.target.value)}
                       placeholder="Search by title, author, ISBN, subject, year level..." 
                     />
                   </div>
@@ -1769,13 +1894,13 @@ export default function App() {
 
                 {/* MAIN E-COMMERCE PRODUCTS GRID */}
                 <section className="store-grid-section">
-                  <h3>Catalog results ({filteredBooks.length})</h3>
+                  <h3>Catalog results ({storefrontBooks.length})</h3>
                   
                   <div className="store-grid">
-                    {filteredBooks.length === 0 ? (
+                    {storefrontBooks.length === 0 ? (
                       <div className="empty-msg" style={{ gridColumn: 'span 4', textAlign: 'center' }}>
                         <p>No matching books found in the local catalog.</p>
-                        {query.trim() ? (
+                        {storefrontQuery.trim() ? (
                           <>
                             <p>Check Google Books results below, or search these sources directly:</p>
                             <div className="external-search-links">
@@ -1791,7 +1916,7 @@ export default function App() {
                         )}
                       </div>
                     ) : (
-                      filteredBooks.map((book, index) => (
+                      storefrontBooks.map((book, index) => (
                         <button
                           key={book.book_id}
                           type="button"
@@ -1872,12 +1997,12 @@ export default function App() {
                     )}
                   </div>
 
-                  {query.trim() && (
+                  {storefrontQuery.trim() && (
                     <div className="search-engine-results">
                       <div className="search-engine-heading">
                         <div>
                           <p className="eyebrow">E-Book</p>
-                          <h3>Google Books results for "{query.trim()}"</h3>
+                          <h3>Google Books results for "{storefrontQuery.trim()}"</h3>
                         </div>
                         <span>{visibleExternalSearchStatus === 'loading' ? 'Searching...' : `${visibleExternalBookResults.length} results`}</span>
                       </div>
@@ -2011,10 +2136,12 @@ export default function App() {
             <BookMarked size={18} /> Overview
           </button>
           
-          {/* Link back to store view */}
-          <button className={(view as string) === 'storefront' ? 'active' : ''} onClick={() => { navigateToView('storefront'); setStoreTab('catalog'); }}>
-            <ShoppingBag size={18} /> Book Storefront
-          </button>
+          {/* Link back to store view (Exclusive to students and faculty browsing) */}
+          {currentUser.role !== 'Librarian' && currentUser.role !== 'Administrator' && (
+            <button className={(view as string) === 'storefront' ? 'active' : ''} onClick={() => { navigateToView('storefront'); setStoreTab('catalog'); }}>
+              <ShoppingBag size={18} /> Book Storefront
+            </button>
+          )}
 
           <button className={view === 'catalog' ? 'active' : ''} onClick={() => navigateToView('catalog')}>
             <BookOpen size={18} /> Book Catalog
@@ -2141,7 +2268,11 @@ export default function App() {
                   <button className="btn-primary" onClick={() => navigateToView(roleFocus.primaryView)}>
                     {roleFocus.primary}
                   </button>
-                  {currentUser?.role !== 'Student' && (
+                  {currentUser?.role === 'Student' ? (
+                    <button className="btn-secondary" onClick={() => setIsGatePassModalOpen(true)} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <QrCode size={17} style={{ color: '#2dd4bf' }} /> Show My QR Gate Pass
+                    </button>
+                  ) : (
                     <button className="btn-secondary" onClick={() => navigateToView(roleFocus.secondaryView)}>
                       {roleFocus.secondary}
                     </button>
@@ -2199,6 +2330,24 @@ export default function App() {
                 </div>
               </div>
             </section>
+
+            {/* STUDENT QUICK QR GATE PASS BANNER */}
+            {currentUser.role === 'Student' && (
+              <div className="panel-card student-overview-gatepass-banner" style={{ background: 'linear-gradient(135deg, rgba(15, 117, 129, 0.28), rgba(45, 212, 191, 0.14))', border: '1px solid rgba(45, 212, 191, 0.4)', marginBottom: '18px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 20px', borderRadius: '14px', flexWrap: 'wrap', gap: '14px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                  <div style={{ background: '#2dd4bf', color: '#09131d', padding: '12px', borderRadius: '12px', display: 'grid', placeItems: 'center', boxShadow: '0 4px 12px rgba(45, 212, 191, 0.3)' }}>
+                    <QrCode size={28} />
+                  </div>
+                  <div>
+                    <h4 style={{ margin: 0, color: '#ffffff', fontSize: '1.1rem', fontWeight: 700 }}>Library Entry &amp; Exit QR Gate Pass</h4>
+                    <p style={{ margin: '3px 0 0 0', color: '#cbd5e1', fontSize: '0.86rem' }}>Present this scannable personal pass to the library stationary gate scanner.</p>
+                  </div>
+                </div>
+                <button className="btn-primary" onClick={() => setIsGatePassModalOpen(true)} style={{ padding: '9px 20px', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.92rem' }}>
+                  <QrCode size={18} /> Open Gate Pass
+                </button>
+              </div>
+            )}
 
             {/* DASHBOARD CONTENT GRID */}
             <div className="dashboard-grid">
@@ -2516,15 +2665,17 @@ export default function App() {
               </div>
 
               <div className="form-group">
-                <label htmlFor="prof-username" style={{ color: '#cbd5e1', fontSize: '0.88rem', fontWeight: 600, display: 'block', marginBottom: '6px' }}>Username</label>
+                <label htmlFor="prof-username" style={{ color: '#cbd5e1', fontSize: '0.88rem', fontWeight: 600, display: 'block', marginBottom: '6px' }}>Username (Sign-in Account)</label>
                 <input
                   id="prof-username"
                   type="text"
-                  value={currentUser.username}
-                  disabled
-                  style={{ width: '100%', padding: '10px 14px', borderRadius: '8px', background: '#040910', border: '1px solid rgba(255, 255, 255, 0.08)', color: '#64748b', cursor: 'not-allowed', fontSize: '0.92rem' }}
+                  value={profileUsername}
+                  onChange={(e) => setProfileUsername(e.target.value)}
+                  placeholder="e.g. marlon123"
+                  style={{ width: '100%', padding: '10px 14px', borderRadius: '8px', background: '#09131d', border: '1px solid rgba(255, 255, 255, 0.15)', color: '#ffffff', fontSize: '0.92rem' }}
+                  required
                 />
-                <small style={{ color: '#64748b', fontSize: '0.76rem', marginTop: '4px', display: 'block' }}>Username is unique and cannot be modified.</small>
+                <small style={{ color: '#2dd4bf', fontSize: '0.76rem', marginTop: '4px', display: 'block' }}>You can update your username. It must be unique across all accounts.</small>
               </div>
 
               <div className="form-group">
@@ -2558,15 +2709,33 @@ export default function App() {
                 <select
                   id="prof-level"
                   value={profileAcademicLevel}
-                  onChange={(e) => setProfileAcademicLevel(e.target.value)}
+                  onChange={(e) => {
+                    const newLvl = e.target.value
+                    setProfileAcademicLevel(newLvl)
+                    if (['Grade 7', 'Grade 8', 'Grade 9', 'Grade 10'].includes(newLvl)) {
+                      setProfileProgramStrand('Junior High School')
+                    } else if (profileProgramStrand === 'Junior High School') {
+                      setProfileProgramStrand('ICT')
+                    }
+                  }}
                   style={{ width: '100%', padding: '10px 14px', borderRadius: '8px', background: '#09131d', border: '1px solid rgba(255, 255, 255, 0.15)', color: '#ffffff', fontSize: '0.92rem' }}
                 >
-                  <option value="1st Year">1st Year Course</option>
-                  <option value="2nd Year">2nd Year Course</option>
-                  <option value="3rd Year">3rd Year Course</option>
-                  <option value="4th Year">4th Year Course</option>
-                  <option value="Grade 11">Senior High Grade 11</option>
-                  <option value="Grade 12">Senior High Grade 12</option>
+                  <optgroup label="Junior High School">
+                    <option value="Grade 7">Grade 7</option>
+                    <option value="Grade 8">Grade 8</option>
+                    <option value="Grade 9">Grade 9</option>
+                    <option value="Grade 10">Grade 10</option>
+                  </optgroup>
+                  <optgroup label="Senior High School">
+                    <option value="Grade 11">Senior High Grade 11</option>
+                    <option value="Grade 12">Senior High Grade 12</option>
+                  </optgroup>
+                  <optgroup label="College">
+                    <option value="1st Year">1st Year Course</option>
+                    <option value="2nd Year">2nd Year Course</option>
+                    <option value="3rd Year">3rd Year Course</option>
+                    <option value="4th Year">4th Year Course</option>
+                  </optgroup>
                   <option value="Faculty">Faculty / Teacher</option>
                 </select>
               </div>
@@ -2577,19 +2746,30 @@ export default function App() {
                   id="prof-program"
                   value={profileProgramStrand}
                   onChange={(e) => setProfileProgramStrand(e.target.value)}
+                  disabled={['Grade 7', 'Grade 8', 'Grade 9', 'Grade 10'].includes(profileAcademicLevel)}
                   style={{ width: '100%', padding: '10px 14px', borderRadius: '8px', background: '#09131d', border: '1px solid rgba(255, 255, 255, 0.15)', color: '#ffffff', fontSize: '0.92rem' }}
                 >
+                  <option value="Junior High School">Junior High School (JHS)</option>
                   <option value="ICT">ICT (Information &amp; Communications Technology)</option>
+                  <option value="SMAW">SMAW (Shielded Metal Arc Welding)</option>
+                  <option value="Automotive">Automotive Servicing</option>
+                  <option value="HUMSS">HUMSS (Humanities &amp; Social Sciences)</option>
+                  <option value="Healthcare">Healthcare Services</option>
+                  <option value="IT">IT / BS In Information Technology</option>
                   <option value="BSIT">BSIT (BS Information Technology)</option>
                   <option value="BSA">BSA (BS Accountancy)</option>
                   <option value="BSBA">BSBA (BS Business Administration)</option>
                   <option value="BSED">BSED (BS Education)</option>
                   <option value="STEM">STEM (Science, Tech, Engineering, Math)</option>
-                  <option value="HUMSS">HUMSS (Humanities &amp; Social Sciences)</option>
                   <option value="ABM">ABM (Accountancy, Business &amp; Management)</option>
                   <option value="GAS">GAS (General Academic Strand)</option>
                   <option value="Faculty">Faculty / Department</option>
                 </select>
+                {['Grade 7', 'Grade 8', 'Grade 9', 'Grade 10'].includes(profileAcademicLevel) && (
+                  <small style={{ color: '#2dd4bf', fontSize: '0.78rem', marginTop: '4px', display: 'block' }}>
+                    Junior High School students have no specialized strand yet (automatically set to Junior High School).
+                  </small>
+                )}
               </div>
 
               <div style={{ gridColumn: 'span 2', display: 'flex', justifyContent: 'flex-end', marginTop: '8px' }}>
@@ -2641,8 +2821,8 @@ export default function App() {
                 <input 
                   type="text" 
                   placeholder="Search books by title, author, category, or year level..." 
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
+                  value={catalogQuery}
+                  onChange={(e) => updateBookSearch(e.target.value)}
                 />
               </div>
               <div className="catalog-filter-control">
@@ -2809,6 +2989,89 @@ export default function App() {
                 </tbody>
               </table>
             </div>
+
+            {/* INTEGRATED ONLINE BOOK SEARCH FOR LIBRARIAN / CATALOG (Google Books API) */}
+            <div style={{ marginTop: '28px', borderTop: '1px solid rgba(255, 255, 255, 0.1)', paddingTop: '20px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px', flexWrap: 'wrap', gap: '8px' }}>
+                <div>
+                  <h4 style={{ margin: 0, color: '#ffffff', fontSize: '1.05rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <Compass size={18} style={{ color: '#2dd4bf' }} /> Online External Book Discovery (Google Books)
+                  </h4>
+                  <p style={{ margin: '3px 0 0 0', color: '#94a3b8', fontSize: '0.84rem' }}>
+                    Search and preview millions of online e-books &amp; references beyond local shelf inventory.
+                  </p>
+                </div>
+                <span>{visibleExternalSearchStatus === 'loading' ? 'Searching Google Books...' : `${visibleExternalBookResults.length} external results`}</span>
+              </div>
+
+              {!catalogQuery.trim() ? (
+                <div style={{ padding: '16px', background: 'rgba(255, 255, 255, 0.02)', borderRadius: '10px', border: '1px dashed rgba(255, 255, 255, 0.1)', textAlign: 'center', color: '#94a3b8', fontSize: '0.88rem' }}>
+                  Type a keyword in the search box above to simultaneously discover matching external online books and digital previews.
+                </div>
+              ) : (
+                <>
+                  {visibleExternalSearchStatus === 'loading' && (
+                    <p className="external-search-status">Searching Google Books API for "{catalogQuery.trim()}"...</p>
+                  )}
+                  {visibleExternalSearchStatus === 'ready' && visibleExternalBookResults.length === 0 && (
+                    <p className="external-search-status">No external Google Books results found for "{catalogQuery.trim()}".</p>
+                  )}
+                  {visibleExternalBookResults.length > 0 && (
+                    <div className="external-book-results">
+                      {visibleExternalBookResults.map((result) => (
+                        <article key={result.key} className="external-book-card">
+                          {result.coverUrl ? (
+                            <img src={result.coverUrl} alt={result.title} />
+                          ) : (
+                            <div className="external-book-cover-placeholder">
+                              <BookOpen size={24} />
+                            </div>
+                          )}
+                          <div>
+                            <span className="external-source-label">Google Books</span>
+                            <h4>{result.title}</h4>
+                            <p>{result.authors}</p>
+                            <span>{result.publisher} • {result.publishedDate}</span>
+                            <span>{result.categories}</span>
+                            <span className={`google-access-pill ${result.embeddable ? 'is-embeddable' : ''}`}>
+                              {result.embeddable ? 'Embeddable preview' : result.accessViewStatus.replaceAll('_', ' ').toLowerCase()}
+                            </span>
+                            <p className="external-book-description">{result.description}</p>
+                            <div className="external-book-actions">
+                              <button type="button" className="external-link-btn" onClick={() => handlePreviewExternalBook(result)}>
+                                <BookOpen size={14} />
+                                {result.embeddable ? 'Read Preview' : 'Open Preview'}
+                              </button>
+                              <a href={result.infoUrl} target="_blank" rel="noreferrer">
+                                <Info size={14} /> Details
+                              </a>
+                              {currentUser.role === 'Librarian' && (
+                                <button
+                                  type="button"
+                                  className="external-link-btn"
+                                  style={{ background: 'rgba(45, 212, 191, 0.15)', color: '#2dd4bf', border: '1px solid rgba(45, 212, 191, 0.3)' }}
+                                  onClick={() => {
+                                    resetBookForm()
+                                    setNewBookTitle(result.title)
+                                    setNewBookAuthor(result.authors)
+                                    setNewBookCategory(result.categories || 'General')
+                                    setNewBookCoverUrl(result.coverUrl || '')
+                                    setNewBookCoverPreview(result.coverUrl || '')
+                                    setIsAddBookOpen(true)
+                                  }}
+                                >
+                                  <Plus size={14} /> Add to Shelf
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
           </div>
         )}
 
@@ -2887,7 +3150,7 @@ export default function App() {
           const totalTx = analyticsData.totalBorrows || 1
           const strandEntries = Object.entries(analyticsData.strandBorrows) as [string, number][]
           const maxStrand = Math.max(...strandEntries.map(([, v]) => v), 1)
-          const strandColors: Record<string, string> = { BSIT: '#0f7581', BSA: '#f2bd4a', BSBA: '#102131', BSED: '#ef4444', SHS: '#10b981' }
+          const strandColors: Record<string, string> = { 'Junior High School': '#2dd4bf', ICT: '#0f7581', SMAW: '#f59e0b', Automotive: '#ef4444', HUMSS: '#8b5cf6', Healthcare: '#10b981', IT: '#0284c7', Faculty: '#64748b' }
 
           // Status breakdown for donut
           const availPct = books.length ? Math.round((analyticsData.availableBooks / books.length) * 100) : 0
@@ -3119,20 +3382,34 @@ export default function App() {
                       </div>
                     </div>
 
-                    <div className="activity-timeline">
+                    <div className="activity-timeline" style={{ maxHeight: '380px', overflowY: 'auto', paddingRight: '4px' }}>
                       {recentTx.length === 0 ? (
-                        <p className="empty-msg">No recent transactions.</p>
+                        <p className="empty-msg">No recent transactions recorded.</p>
                       ) : (
                         recentTx.map((tx) => (
-                          <div className="timeline-item" key={tx.transaction_id}>
-                            <div className={`timeline-dot ${tx.status === 'Overdue' ? 'dot-danger' : tx.status === 'Returned' ? 'dot-success' : 'dot-info'}`} />
-                            <div className="timeline-content">
-                              <strong>{tx.users?.name || 'User'}</strong> — {tx.books?.title || 'Book'}
+                          <div className="timeline-item" key={tx.transaction_id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 14px', borderRadius: '10px', background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.08)', marginBottom: '8px', gap: '10px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
+                              <div className={`timeline-dot ${tx.status === 'Overdue' ? 'dot-danger' : tx.status === 'Returned' ? 'dot-success' : 'dot-info'}`} style={{ width: '12px', height: '12px', flexShrink: 0 }} />
+                              <div style={{ minWidth: 0 }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                                  <strong style={{ color: '#ffffff', fontSize: '0.92rem' }}>{tx.users?.name || 'Library User'}</strong>
+                                  <span style={{ fontSize: '0.74rem', color: '#94a3b8', background: 'rgba(255, 255, 255, 0.08)', padding: '2px 8px', borderRadius: '10px', fontWeight: 600 }}>
+                                    {tx.users?.program_strand || tx.users?.academic_level || 'Member'}
+                                  </span>
+                                </div>
+                                <div style={{ color: '#cbd5e1', fontSize: '0.84rem', marginTop: '3px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                  📖 {tx.books?.title || 'Catalog Item'}
+                                </div>
+                              </div>
+                            </div>
+                            <div style={{ textAlign: 'right', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px', flexShrink: 0 }}>
                               <span className={`badge badge-sm ${tx.status === 'Overdue' ? 'badge-warning' : tx.status === 'Returned' ? 'badge-success' : 'badge-info'}`}>
                                 {tx.status}
                               </span>
+                              <span style={{ fontSize: '0.74rem', color: '#94a3b8' }}>
+                                {new Date(tx.borrow_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                              </span>
                             </div>
-                            <span className="timeline-date">{new Date(tx.borrow_date).toLocaleDateString()}</span>
                           </div>
                         ))
                       )}
@@ -3166,7 +3443,7 @@ export default function App() {
                   <span>Format: PDF • System Generated</span>
                   <p>Template-based inventory masterlist, organized by category with title, author, and copies only.</p>
                 </div>
-                <button className="btn-primary btn-report-download" onClick={() => handleExportPDF('books')}>
+                <button className="btn-primary btn-report-download" onClick={() => void handleExportPDF('books')}>
                   Download Inventory Report
                 </button>
               </div>
@@ -3177,7 +3454,7 @@ export default function App() {
                   <span>Format: PDF • Live Operations</span>
                   <p>Comprehensive transaction log listing all active borrowings, request submissions, return deadlines, and overdue status.</p>
                 </div>
-                <button className="btn-primary btn-report-download" onClick={() => handleExportPDF('transactions')}>
+                <button className="btn-primary btn-report-download" onClick={() => void handleExportPDF('transactions')}>
                   Download Borrowed Books Report
                 </button>
               </div>
@@ -3188,7 +3465,7 @@ export default function App() {
                   <span>Format: PDF • Due Monitoring</span>
                   <p>Focused report for overdue books, borrower academic details, due dates, and notification readiness for librarian action.</p>
                 </div>
-                <button className="btn-primary btn-report-download" onClick={() => handleExportPDF('overdue')}>
+                <button className="btn-primary btn-report-download" onClick={() => void handleExportPDF('overdue')}>
                   Download Overdue Report
                 </button>
               </div>
@@ -3196,11 +3473,34 @@ export default function App() {
               <div className="report-item-card">
                 <div className="report-card-top">
                   <strong>User Activity Directory</strong>
-                  <span>Format: PDF • Dynamic</span>
-                  <p>Administrative log summarizing user identities, academic program or strand, year level, and contact details.</p>
+                  <span>Format: PDF • Dynamic Roster</span>
+                  <p>Roster of all registered users in the system with contact details, academic level, and strand.</p>
+                  <div style={{ marginTop: '10px' }}>
+                    <label style={{ fontSize: '0.82rem', color: '#cbd5e1', display: 'block', marginBottom: '4px' }}>Filter by Role:</label>
+                    <select
+                      value={userReportRoleFilter}
+                      onChange={(e) => setUserReportRoleFilter(e.target.value as 'All' | 'Student' | 'Teacher')}
+                      style={{ padding: '6px 10px', borderRadius: '6px', background: '#09131d', border: '1px solid rgba(255, 255, 255, 0.15)', color: '#ffffff', fontSize: '0.84rem', width: '100%' }}
+                    >
+                      <option value="All">All Users (Students &amp; Teachers)</option>
+                      <option value="Student">Students Only</option>
+                      <option value="Teacher">Teachers / Faculty Only</option>
+                    </select>
+                  </div>
                 </div>
-                <button className="btn-primary btn-report-download" onClick={() => handleExportPDF('users')}>
-                  Download User Activity Report
+                <button className="btn-primary btn-report-download" onClick={() => void handleExportPDF('users')}>
+                  Download User Directory PDF
+                </button>
+              </div>
+
+              <div className="report-item-card">
+                <div className="report-card-top">
+                  <strong>Student &amp; Faculty Gate Entry / Exit Logs</strong>
+                  <span>Format: PDF • Weekly Scans</span>
+                  <p>Official organized report of all student and faculty gate entries and exits, grouped with timestamps.</p>
+                </div>
+                <button className="btn-primary btn-report-download" onClick={() => void handleExportPDF('gate_logs')}>
+                  Download Weekly Gate Logs PDF
                 </button>
               </div>
 
@@ -3209,7 +3509,7 @@ export default function App() {
         )}
 
         {view === 'users' && (currentUser.role === 'Librarian' || currentUser.role === 'Administrator') && (
-          <div className="panel-card">
+          <div className="panel-card student-records-page">
             <div className="panel-card-header">
               <div className="panel-title">
                 <UserCheck size={20} />
@@ -3220,8 +3520,15 @@ export default function App() {
               </p>
             </div>
 
-            <div className="form-grid">
-              <div className="panel-card-inner">
+            <div className="form-grid student-records-grid">
+              <div className="panel-card-inner student-record-create">
+                <div className="student-record-section-heading">
+                  <div className="student-record-section-icon"><Plus size={20} /></div>
+                  <div>
+                    <h4>Create Student Account</h4>
+                    <p>Enter the student’s identity, login, contact, and academic details.</p>
+                  </div>
+                </div>
                 {newStudentError && <div className="login-alert error">{newStudentError}</div>}
                 {newStudentSuccess && <div className="login-alert success">{newStudentSuccess}</div>}
                 <form onSubmit={handleCreateStudent} className="admin-form">
@@ -3280,7 +3587,9 @@ export default function App() {
                         id="student-strand"
                         value={newStudentProgramStrand}
                         onChange={(e) => setNewStudentProgramStrand(e.target.value)}
+                        disabled={['Grade 7', 'Grade 8', 'Grade 9', 'Grade 10'].includes(newStudentAcademicLevel)}
                       >
+                        <option value="Junior High School">Junior High School (JHS)</option>
                         <option value="ICT">ICT (Information & Communications Technology)</option>
                         <option value="SMAW">SMAW (Shielded Metal Arc Welding)</option>
                         <option value="Automotive">Automotive Servicing</option>
@@ -3295,7 +3604,15 @@ export default function App() {
                       <select
                         id="student-level"
                         value={newStudentAcademicLevel}
-                        onChange={(e) => setNewStudentAcademicLevel(e.target.value)}
+                        onChange={(e) => {
+                          const lvl = e.target.value
+                          setNewStudentAcademicLevel(lvl)
+                          if (['Grade 7', 'Grade 8', 'Grade 9', 'Grade 10'].includes(lvl)) {
+                            setNewStudentProgramStrand('Junior High School')
+                          } else if (newStudentProgramStrand === 'Junior High School') {
+                            setNewStudentProgramStrand('ICT')
+                          }
+                        }}
                       >
                         <optgroup label="Junior High School">
                           <option value="Grade 7">Grade 7</option>
@@ -3320,7 +3637,7 @@ export default function App() {
                   </button>
                 </form>
 
-                <div className="manual-lend-block">
+                <div className="manual-lend-block student-record-checkout">
                   <h4>Manual Checkout for Offline Students</h4>
                   <p className="panel-subtitle">Type student or book details to search database records and issue a physical copy directly.</p>
                   {manualBorrowError && <div className="login-alert error">{manualBorrowError}</div>}
@@ -3488,7 +3805,7 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="panel-card-inner">
+              <div className="panel-card-inner student-record-list">
                 <div className="panel-card-inner-header">
                   <div>
                     <h4>All User Accounts</h4>
@@ -3777,14 +4094,13 @@ export default function App() {
               </div>
 
               <div className="form-group">
-                <label htmlFor="b-isbn">ISBN Code Number</label>
+                <label htmlFor="b-isbn">ISBN Code Number (Optional)</label>
                 <input 
                   id="b-isbn" 
                   type="text" 
                   value={newBookIsbn}
                   onChange={(e) => setNewBookIsbn(e.target.value)}
-                  placeholder="e.g. 978-013-482" 
-                  required 
+                  placeholder="e.g. 978-013-482 (Leave blank to auto-generate accession code)"
                 />
               </div>
 
@@ -3834,7 +4150,7 @@ export default function App() {
                     list="category-suggestions"
                     value={newBookCategory}
                     onChange={(e) => setNewBookCategory(e.target.value)}
-                    placeholder="e.g. Science, Math, Information Technology..."
+                    placeholder="e.g. Science, Mathematics, English..."
                     required
                   />
                   <datalist id="category-suggestions">
@@ -3906,7 +4222,13 @@ export default function App() {
                     type="number"
                     min="1"
                     value={newBookTotalCopies}
-                    onChange={(e) => setNewBookTotalCopies(Math.max(1, parseInt(e.target.value) || 1))}
+                    onChange={(e) => setNewBookTotalCopies(e.target.value)}
+                    onBlur={() => {
+                      if (newBookTotalCopies === '' || Number(newBookTotalCopies) < 1) {
+                        setNewBookTotalCopies(1)
+                      }
+                    }}
+                    placeholder="1"
                     required
                   />
                 </div>

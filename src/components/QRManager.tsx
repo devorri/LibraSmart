@@ -312,11 +312,11 @@ export function QRManager({ currentUser, onLogCreated }: QRManagerProps): React.
   }, [logs, logFilter])
 
   return (
-    <div className="qr-manager-section" style={{ width: '100%', maxWidth: isElevatedUser ? '1200px' : '460px', margin: '0 auto' }}>
+    <div className="qr-manager-section" style={{ width: '100%', maxWidth: isElevatedUser ? '1480px' : '460px', margin: '0 auto' }}>
       {currentUser?.role === 'Librarian' || currentUser?.role === 'Administrator' ? (
         // LIBRARIAN / ADMIN VIEW: STATIONARY GATE QR DISPLAY STATION
-        <div className="qr-grid">
-          <div className="qr-panel scan-desk">
+        <div className="qr-grid stationary-gate-layout">
+          <div className="qr-panel scan-desk stationary-qr-panel">
             <div className="panel-header">
               <QrCode className="header-icon text-teal" />
               <div>
@@ -326,11 +326,11 @@ export function QRManager({ currentUser, onLogCreated }: QRManagerProps): React.
             </div>
 
             {/* Displaying stationary gate check-in/out QR Code */}
-            <div className="viewfinder-container" style={{ padding: '20px 0', display: 'grid', placeItems: 'center' }}>
-              <div className="viewfinder-screen" style={{ width: '220px', height: '220px', background: '#ffffff', border: '1px solid var(--color-border)', borderRadius: '14px', display: 'grid', placeItems: 'center', boxShadow: '0 8px 24px rgba(0,0,0,0.2)' }}>
+            <div className="viewfinder-container stationary-qr-container">
+              <div className="viewfinder-screen stationary-qr-frame">
                 <QRCodeSVG
                   value="MPCI-LIBRARY-GATE"
-                  size={190}
+                  size={310}
                   bgColor="#ffffff"
                   fgColor="#000000"
                   level="H"
@@ -340,8 +340,8 @@ export function QRManager({ currentUser, onLogCreated }: QRManagerProps): React.
               </div>
             </div>
 
-            <div style={{ textAlign: 'center', padding: '0 16px 16px 16px', color: 'var(--color-text-muted)', fontSize: '0.86rem' }}>
-              <p style={{ fontWeight: '700', color: 'var(--color-text)', marginBottom: '6px' }}>Stationary Entrance QR Code</p>
+            <div className="stationary-qr-instructions">
+              <p>Stationary Entrance QR Code</p>
               <p style={{ margin: 0, lineHeight: 1.45 }}>Students and teachers can scan this QR code with their mobile devices to log Entry or Exit attendance automatically.</p>
             </div>
           </div>
