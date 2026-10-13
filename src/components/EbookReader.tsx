@@ -74,6 +74,13 @@ export function EbookReader({ book, onClose }: EbookReaderProps) {
   )
 
   useEffect(() => {
+    if (book.status !== 'E-book' && !book.ebook_url && !book.google_books_id && !book.content) {
+      alert(`"${book.title}" is a physical shelf book without a digitized copy. Please reserve it online for counter pick-up.`)
+      onClose()
+    }
+  }, [book, onClose])
+
+  useEffect(() => {
     if (!isGoogleBooksPreview || !googleBooksIdentifier) return
 
     let cancelled = false

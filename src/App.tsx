@@ -241,7 +241,13 @@ export default function App() {
   }
 
   const navigateToView = (nextView: View) => {
-    const resolvedView = isStudent && restrictedStudentViews.includes(nextView) ? 'overview' : nextView
+    const isLibrarianOrAdmin = currentUser?.role === 'Librarian' || currentUser?.role === 'Administrator'
+    let resolvedView = nextView
+    if (isStudent && restrictedStudentViews.includes(nextView)) {
+      resolvedView = 'overview'
+    } else if (isLibrarianOrAdmin && nextView === 'storefront') {
+      resolvedView = 'catalog'
+    }
     setView(resolvedView)
   }
 
@@ -391,7 +397,7 @@ export default function App() {
 
       if (initialBookId) {
         const matchingBook = books.find((book) => String(book.book_id) === initialBookId)
-        if (matchingBook) {
+        if (matchingBook && matchingBook.status === 'E-book') {
           setEbookToRead(matchingBook)
         }
       }
@@ -434,7 +440,7 @@ export default function App() {
 
       if (nextBookId) {
         const matchingBook = books.find((book) => String(book.book_id) === nextBookId)
-        setEbookToRead(matchingBook ?? null)
+        setEbookToRead(matchingBook && matchingBook.status === 'E-book' ? matchingBook : null)
       } else {
         setEbookToRead(null)
       }
@@ -1041,13 +1047,21 @@ export default function App() {
       return
     }
 
+    const existingActive = transactions.find(
+      t => t.user_id === currentUser.user_id && t.book_id === book.book_id && (t.status === 'Requested' || t.status === 'Borrowed')
+    )
+    if (existingActive) {
+      alert(`You already have an active ${existingActive.status === 'Requested' ? 'online reservation' : 'borrow'} for "${book.title}". View it under "My Online Book Reservations & Approval List" on your dashboard.`)
+      return
+    }
+
     const tx = await createTransaction(currentUser.user_id, book.book_id)
     if (tx) {
       if (currentUser.phone_number) {
         const msg = `MPCI Library: Your request to borrow "${book.title}" is received. Please go to the library counter for physical releasing.`
         await sendSMS(currentUser.user_id, currentUser.phone_number, msg, 'Transaction')
       }
-      alert('Borrow request submitted! Awaiting Librarian approval.')
+      alert(`Online reservation for "${book.title}" submitted successfully! Awaiting Librarian approval for counter pick-up.`)
       loadDatabaseData()
     }
   }
@@ -1195,7 +1209,8 @@ export default function App() {
       })
   }, [books, catalogAvailability, catalogQuery, catalogRelevance, catalogSort, selectedCategory])
 
-  const activeExternalTerm = (view === 'catalog' ? catalogQuery : storefrontQuery).trim()
+  const isStaff = currentUser?.role === 'Librarian' || currentUser?.role === 'Administrator'
+  const activeExternalTerm = (view === 'catalog' ? (isStaff ? catalogQuery : '') : storefrontQuery).trim()
 
   const externalSearchLinks = useMemo(() => {
     const term = activeExternalTerm
@@ -1624,7 +1639,7 @@ export default function App() {
   // =============================================================
   // RENDER PUBLIC E-COMMERCE STOREFRONT (Guest View or Browsing View)
   // =============================================================
-  if (view === 'storefront' || !currentUser) {
+  if ((view === 'storefront' && currentUser?.role !== 'Librarian' && currentUser?.role !== 'Administrator') || !currentUser) {
     return (
       <div className="public-storefront">
         
@@ -1916,84 +1931,120 @@ export default function App() {
                         )}
                       </div>
                     ) : (
-                      storefrontBooks.map((book, index) => (
-                        <button
-                          key={book.book_id}
-                          type="button"
-                          className="book-store-card"
-                          onClick={() => {
-                            if (book.status === 'E-book') {
-                              handleBorrowOnline(book)
-                            } else {
-                              setEbookToRead({
-                                ...book,
-                                status: 'E-book',
-                                ebook_url: book.ebook_url || null,
-                                content: book.content || null,
-                                cover_image_url: book.cover_image_url || null,
-                                total_copies: book.total_copies ?? 1,
-                                available_copies: book.available_copies ?? 1
-                              })
-                            }
-                          }}
-                        >
-                          <div 
-                            className={`book-cover-stage ${getCoverClass(index)}`}
-                            style={book.cover_image_url ? { backgroundImage: `url(${book.cover_image_url})`, backgroundSize: 'cover', backgroundPosition: 'center' } : {}}
+                      storefrontBooks.map((book, index) => {
+                        const isEbook = book.status === 'E-book'
+                        const isAvailable = book.status === 'Available' && (book.available_copies === undefined || book.available_copies > 0)
+                        const isReservedByMe = currentUser ? transactions.some(t => t.user_id === currentUser.user_id && t.book_id === book.book_id && t.status === 'Requested') : false
+                        const isBorrowedByMe = currentUser ? transactions.some(t => t.user_id === currentUser.user_id && t.book_id === book.book_id && t.status === 'Borrowed') : false
+
+                        return (
+                          <div
+                            key={book.book_id}
+                            className="book-store-card"
                           >
-                            {!book.cover_image_url && (
-                              <>
-                                <span className="cover-title">{book.title}</span>
-                                <span className="cover-author">{book.author}</span>
-                              </>
-                            )}
-                            <div className="book-preview-pill">
-                              <span>Preview</span>
-                              <strong>Hover to inspect</strong>
-                            </div>
-                          </div>
-
-                          <div className="book-store-info">
-                            <span className="book-category-tag">{book.category}</span>
-                            <h4>{book.title}</h4>
-                            <span className="book-author">By {book.author}</span>
-                            
-                            {/* Status elements */}
-                            <div className="book-status-row">
-                              <span className={`badge ${
-                                book.status === 'Available' 
-                                  ? 'badge-success' 
-                                  : book.status === 'E-book' 
-                                  ? 'badge-info' 
-                                  : 'badge-warning'
-                              }`}>
-                                {book.status}
-                              </span>
-                              <span style={{ fontSize: '0.72rem', fontWeight: '800', color: 'var(--color-text-muted)' }}>
-                                ISBN: {book.isbn}
-                              </span>
+                            <div 
+                              className={`book-cover-stage ${getCoverClass(index)}`}
+                              style={book.cover_image_url ? { backgroundImage: `url(${book.cover_image_url})`, backgroundSize: 'cover', backgroundPosition: 'center' } : {}}
+                              onClick={() => {
+                                if (isEbook) {
+                                  handleBorrowOnline(book)
+                                }
+                              }}
+                              title={isEbook ? 'Click to preview digital E-Book' : book.title}
+                            >
+                              {!book.cover_image_url && (
+                                <>
+                                  <span className="cover-title">{book.title}</span>
+                                  <span className="cover-author">{book.author}</span>
+                                </>
+                              )}
+                              <div className="book-preview-pill">
+                                <span>{isEbook ? 'Digital Edition' : 'Physical Shelf Copy'}</span>
+                                <strong>{isEbook ? 'Read Online' : `${book.available_copies ?? 0} Copies In Library`}</strong>
+                              </div>
                             </div>
 
-                            {/* Copies availability badge */}
-                            {book.status !== 'E-book' && (
-                              <div className="book-copies-indicator">
-                                <span className={`copies-count-text ${book.available_copies === 0 ? 'out-of-stock' : ''}`}>
-                                  {book.available_copies ?? 0} / {book.total_copies ?? 1} copies available
+                            <div className="book-store-info">
+                              <span className="book-category-tag">{book.category}</span>
+                              <h4>{book.title}</h4>
+                              <span className="book-author">By {book.author}</span>
+                              
+                              {/* Status elements */}
+                              <div className="book-status-row">
+                                <span className={`badge ${
+                                  book.status === 'Available' 
+                                    ? 'badge-success' 
+                                    : book.status === 'E-book' 
+                                    ? 'badge-info' 
+                                    : 'badge-warning'
+                                }`}>
+                                  {book.status}
+                                </span>
+                                <span style={{ fontSize: '0.72rem', fontWeight: '800', color: 'var(--color-text-muted)' }}>
+                                  ISBN: {book.isbn}
                                 </span>
                               </div>
-                            )}
 
-                            <div className="book-action-grid">
-                              <span className="book-preview-action">
-                                {book.status === 'E-book' ? 'Read Online' : 'Reserve Online'}
-                              </span>
-                              <span className="book-preview-action secondary">
-                                {book.status === 'E-book' ? 'Tap to read' : 'Reserve for pick-up'}
-                              </span>
+                              {/* Copies availability badge */}
+                              {book.status !== 'E-book' && (
+                                <div className="book-copies-indicator">
+                                  <span className={`copies-count-text ${book.available_copies === 0 ? 'out-of-stock' : ''}`}>
+                                    {book.available_copies ?? 0} / {book.total_copies ?? 1} copies available
+                                  </span>
+                                </div>
+                              )}
+
+                              <div className="book-action-grid">
+                                {isEbook ? (
+                                  <>
+                                    <button
+                                      type="button"
+                                      className="btn-primary"
+                                      onClick={() => handleBorrowOnline(book)}
+                                    >
+                                      Read Online
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="btn-secondary"
+                                      onClick={() => handleBorrowOnline(book)}
+                                    >
+                                      Open Reader
+                                    </button>
+                                  </>
+                                ) : (
+                                  <>
+                                    <button
+                                      type="button"
+                                      className="btn-primary"
+                                      onClick={() => handleRequestBorrow(book)}
+                                      disabled={!isAvailable || isReservedByMe || isBorrowedByMe}
+                                    >
+                                      {isReservedByMe 
+                                        ? 'Reserved' 
+                                        : isBorrowedByMe
+                                        ? 'Borrowed'
+                                        : book.available_copies === 0 
+                                        ? 'All Copies Out' 
+                                        : 'Reserve Online'}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="btn-secondary"
+                                      onClick={() => handleRequestBorrow(book)}
+                                      disabled={!isAvailable || isReservedByMe || isBorrowedByMe}
+                                    >
+                                      {isReservedByMe 
+                                        ? 'Pending Pick-up' 
+                                        : 'Pick-up Counter'}
+                                    </button>
+                                  </>
+                                )}
+                              </div>
                             </div>
                           </div>
-                        </button>
-                      ))
+                        )
+                      })
                     )}
                   </div>
 
@@ -2991,6 +3042,7 @@ export default function App() {
             </div>
 
             {/* INTEGRATED ONLINE BOOK SEARCH FOR LIBRARIAN / CATALOG (Google Books API) */}
+            {(currentUser.role === 'Librarian' || currentUser.role === 'Administrator') && (
             <div style={{ marginTop: '28px', borderTop: '1px solid rgba(255, 255, 255, 0.1)', paddingTop: '20px' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px', flexWrap: 'wrap', gap: '8px' }}>
                 <div>
@@ -3012,6 +3064,11 @@ export default function App() {
                 <>
                   {visibleExternalSearchStatus === 'loading' && (
                     <p className="external-search-status">Searching Google Books API for "{catalogQuery.trim()}"...</p>
+                  )}
+                  {visibleExternalSearchStatus === 'error' && (
+                    <p className="external-search-status">
+                      {visibleExternalSearchMessage || 'Google Books results are unavailable right now.'}
+                    </p>
                   )}
                   {visibleExternalSearchStatus === 'ready' && visibleExternalBookResults.length === 0 && (
                     <p className="external-search-status">No external Google Books results found for "{catalogQuery.trim()}".</p>
@@ -3072,6 +3129,7 @@ export default function App() {
                 </>
               )}
             </div>
+            )}
           </div>
         )}
 
