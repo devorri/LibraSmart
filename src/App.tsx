@@ -1022,9 +1022,11 @@ export default function App() {
 
   const handleTriggerOverdueSMS = async (tx: Transaction) => {
     if (tx.users?.phone_number) {
-      const msg = `MPCI Library WARNING: "${tx.books?.title}" is OVERDUE since ${tx.due_date}. Please return it immediately to avoid student record holds.`
+      const msg = `MPCI Library WARNING: "${tx.books?.title || 'Book'}" is OVERDUE since ${tx.due_date}. Please return it immediately to avoid student record holds.`
       await sendSMS(tx.user_id, tx.users.phone_number, msg, 'Overdue')
-      alert(`Overdue warning SMS queued for ${tx.users.name}`)
+      alert(`Overdue warning SMS sent to ${tx.users.name} (${tx.users.phone_number})`)
+    } else {
+      alert(`Cannot send SMS: No mobile phone number registered for ${tx.users?.name || 'this borrower'}.`)
     }
   }
 
@@ -1371,10 +1373,14 @@ export default function App() {
     let physicalBorrowed = 0
     const actualEbookCount = books.filter(b => b.status === 'E-book').length
 
+    const todayStr = new Date().toISOString().split('T')[0]
+
     transactions.forEach((t) => {
       totalBorrows++
-      if (t.status === 'Overdue') overdueCount++
-      if (t.status === 'Borrowed') physicalBorrowed++
+      const isPastDue = Boolean(t.status === 'Borrowed' && t.due_date && t.due_date < todayStr && !t.return_date)
+      const isOverdue = t.status === 'Overdue' || isPastDue
+      if (isOverdue) overdueCount++
+      if (t.status === 'Borrowed' && !isOverdue) physicalBorrowed++
 
       const level = t.users?.academic_level || ''
       const rawStrand = t.users?.program_strand || ''
@@ -2425,10 +2431,14 @@ export default function App() {
                         return null
                       }
 
+                      const todayStr = new Date().toISOString().split('T')[0]
+                      const isPastDue = Boolean(tx.status === 'Borrowed' && tx.due_date && tx.due_date < todayStr && !tx.return_date)
+                      const isOverdue = tx.status === 'Overdue' || isPastDue
+
                       return (
                         <div 
                           key={tx.transaction_id} 
-                          className={`activity-row-new ${tx.status === 'Returned' ? 'return' : tx.status === 'Overdue' ? 'overdue' : ''}`}
+                          className={`activity-row-new ${tx.status === 'Returned' ? 'return' : isOverdue ? 'overdue' : ''}`}
                         >
                           <div className="activity-icon-container">
                             <BookOpen size={16} />
@@ -2441,20 +2451,20 @@ export default function App() {
                                 ? `Borrower: ${tx.users?.name || 'Unknown Student'}`
                                 : `Author: ${tx.books?.author}`}
                             </span>
-                            <span>Due Date: {tx.due_date} {tx.status === 'Overdue' && ' (OVERDUE)'}</span>
+                            <span>Due Date: {tx.due_date} {isOverdue && <strong style={{ color: '#ef4444' }}> (OVERDUE)</strong>}</span>
                           </div>
 
-                          <div className="activity-action-pane" style={{ display: 'flex', gap: '8px' }}>
+                          <div className="activity-action-pane" style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
                             <span className={`badge ${
                               tx.status === 'Returned' 
                                 ? 'badge-success' 
-                                : tx.status === 'Overdue' 
+                                : isOverdue 
                                 ? 'badge-danger' 
                                 : tx.status === 'Requested'
                                 ? 'badge-warning'
                                 : 'badge-info'
                             }`}>
-                              {tx.status}
+                              {tx.status === 'Returned' ? 'Returned' : isOverdue ? 'Overdue' : tx.status}
                             </span>
                             
                             {(currentUser.role === 'Librarian' || currentUser.role === 'Administrator') && (
@@ -2468,23 +2478,23 @@ export default function App() {
                                     Approve Release
                                   </button>
                                 )}
-                                {tx.status === 'Borrowed' && (
+                                {isOverdue && tx.status !== 'Returned' && (
+                                  <button 
+                                    className="btn-primary" 
+                                    style={{ padding: '6px 12px', fontSize: '0.8rem', backgroundColor: '#ef4444', borderColor: '#ef4444' }}
+                                    onClick={() => handleTriggerOverdueSMS(tx)}
+                                    title="Send Overdue warning SMS (click anytime to notify borrower)"
+                                  >
+                                    Overdue
+                                  </button>
+                                )}
+                                {(tx.status === 'Borrowed' || isOverdue) && tx.status !== 'Requested' && tx.status !== 'Returned' && (
                                   <button 
                                     className="btn-primary" 
                                     style={{ padding: '6px 12px', fontSize: '0.8rem', backgroundColor: '#10b981' }}
                                     onClick={() => handleReturnBook(tx)}
                                   >
                                     Mark Returned
-                                  </button>
-                                )}
-                                {tx.status === 'Overdue' && (
-                                  <button 
-                                    className="btn-primary" 
-                                    style={{ padding: '6px 12px', fontSize: '0.8rem', backgroundColor: '#ef4444' }}
-                                    onClick={() => handleTriggerOverdueSMS(tx)}
-                                    title="Resend Overdue warning SMS"
-                                  >
-                                    Send SMS Alert
                                   </button>
                                 )}
                               </>

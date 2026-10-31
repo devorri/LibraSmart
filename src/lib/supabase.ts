@@ -815,7 +815,7 @@ export async function hashPassword(password: string): Promise<string> {
 export async function sendSMSViaSemaphore(phoneNumber: string, message: string): Promise<boolean> {
   try {
     const apiKey = 'f18fe7eb9f2f4b5477776b98d8b55565'
-    const formattedNumber = phoneNumber.replace(/[^0-9+]/g, '')
+    const formattedNumber = phoneNumber.replace(/[^0-9]/g, '')
     
     // Prefix message body with [LibraSmart Library Desk] so recipients know it comes from LibraSmart even though sender ID is TranslertPH
     let finalMessage = message
