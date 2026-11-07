@@ -92,9 +92,7 @@ export const mockData = {
   users: [
     { user_id: 1, name: 'Marlon G. Tagamolila', username: 'marlon', role: 'Student', program_strand: 'BSIT', academic_level: '4th Year', phone_number: '+639123456789' },
     { user_id: 2, name: 'Ryan Jay A. Ferenal', username: 'ryanjay', role: 'Student', program_strand: 'BSIT', academic_level: '4th Year', phone_number: '+639234567890' },
-    { user_id: 3, name: 'Ms. Jane Doe', username: 'librarian', role: 'Librarian', program_strand: null, academic_level: null, phone_number: '+639345678901' },
     { user_id: 4, name: 'Principal Administrator', username: 'admin', role: 'Administrator', program_strand: null, academic_level: null, phone_number: '+639456789012' },
-    { user_id: 5, name: 'Prof. John Smith', username: 'johnsmith', role: 'Teacher', program_strand: 'BSIT', academic_level: 'Faculty', phone_number: '+639567890123' },
     { user_id: 6, name: 'Hannah Cruz', username: 'hannah', role: 'Student', program_strand: 'BSA', academic_level: '2nd Year', phone_number: '+639678901234' }
   ] as User[],
 

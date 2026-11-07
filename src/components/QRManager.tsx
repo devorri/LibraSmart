@@ -423,12 +423,12 @@ export function QRManager({ currentUser, onLogCreated }: QRManagerProps): React.
         // CLEAN, PURE, UNCLUTTERED STUDENT / MOBILE SCANNER CONSOLE
         <div className="qr-panel scan-desk" style={{ padding: '16px' }}>
           {!currentUser && (
-            <div style={{ padding: '10px 14px', background: 'rgba(15, 23, 42, 0.95)', borderRadius: '8px', border: '1px solid #0f7581', marginBottom: '14px', textAlign: 'left' }}>
+            <div style={{ padding: '10px 14px', background: 'rgba(15, 23, 42, 0.95)', borderRadius: '8px', border: '1px solid #dd5a12', marginBottom: '14px', textAlign: 'left' }}>
               <label style={{ fontSize: '0.8rem', color: '#cbd5e1', fontWeight: 600, display: 'block', marginBottom: '4px' }}>Select Student or Teacher Account</label>
               <select
                 value={guestStudentId ?? ''}
                 onChange={(e) => setGuestStudentId(Number(e.target.value) || null)}
-                style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', background: '#0f172a', color: '#fff', border: '1px solid #0f7581', fontSize: '0.85rem' }}
+                style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', background: '#0f172a', color: '#fff', border: '1px solid #dd5a12', fontSize: '0.85rem' }}
               >
                 <option value="">-- Choose Student or Teacher --</option>
                 {allUsers.map(s => (
@@ -485,7 +485,7 @@ export function QRManager({ currentUser, onLogCreated }: QRManagerProps): React.
                   value="MPCI-LIBRARY-GATE"
                   size={140}
                   bgColor="transparent"
-                  fgColor="#0f7581"
+                  fgColor="#dd5a12"
                   level="Q"
                   className="qr-svg-placeholder"
                 />
@@ -545,7 +545,7 @@ export function QRManager({ currentUser, onLogCreated }: QRManagerProps): React.
               className="btn-secondary"
               onClick={handleDirectLog}
               disabled={loading || (!currentUser && !guestStudentId)}
-              style={{ width: '100%', justifyContent: 'center', color: '#2dd4bf', borderColor: 'rgba(45, 212, 191, 0.4)', padding: '10px', fontSize: '0.88rem' }}
+              style={{ width: '100%', justifyContent: 'center', color: '#ffa552', borderColor: 'rgba(255, 165, 82, 0.4)', padding: '10px', fontSize: '0.88rem' }}
             >
               Quick {scanType} Pass <CheckCircle size={16} />
             </button>

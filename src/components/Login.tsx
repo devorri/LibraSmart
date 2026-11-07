@@ -50,7 +50,7 @@ export function Login({ onLoginSuccess }: LoginProps) {
         setErrorMsg('Invalid username or password.')
       }
     } catch (err) {
-      setErrorMsg('An error occurred during sign in.')
+      setErrorMsg('An error occurred during log in.')
       console.error(err)
     } finally {
       setLoading(false)
@@ -140,7 +140,7 @@ export function Login({ onLoginSuccess }: LoginProps) {
       setErrorMsg('Unable to reset password. Please contact the library administrator.')
       return
     }
-    setSuccessMsg('Password reset successfully. Please sign in.')
+    setSuccessMsg('Password reset successfully. Please log in.')
     setPassword('')
     setResetOtp('')
     setResetPassword('')
@@ -201,7 +201,10 @@ export function Login({ onLoginSuccess }: LoginProps) {
     <div className="login-container">
       <div className={`login-card ${isRegistering ? 'login-card-register' : ''}`}>
         <div className="login-header">
-          <img src="/librasmart-logo-1024.png" alt="LibraSmart Logo" className="login-logo" />
+          <div className="login-logo-row">
+            <img src="/mpci-logo.png" alt="Matalam Polytechnic College Logo" className="login-logo school-logo" />
+            <img src="/librasmart-logo-1024.png" alt="LibraSmart Logo" className="login-logo" />
+          </div>
           <h2>LibraSmart</h2>
           <p className="login-subtitle">
             Web-Based Library Management System & Analytics<br />
@@ -252,7 +255,7 @@ export function Login({ onLoginSuccess }: LoginProps) {
             </div>
 
             <button type="submit" className="btn-primary login-btn" disabled={loading}>
-              {loading ? 'Signing in...' : 'Sign In'} <UserCheck size={18} />
+              {loading ? 'Logging in...' : 'Log In'} <UserCheck size={18} />
             </button>
 
             <button type="button" className="password-toggle forgot-password-link" onClick={() => { setIsResettingPassword(true); setErrorMsg(''); setSuccessMsg(''); }}>
@@ -276,7 +279,7 @@ export function Login({ onLoginSuccess }: LoginProps) {
                 <input id="reset-username" value={username} onChange={(e) => setUsername(e.target.value)} required />
               </div>
               <button type="submit" className="btn-primary login-btn" disabled={loading}>{loading ? 'Sending...' : 'Send reset code'} <ShieldCheck size={18} /></button>
-              <div className="login-toggle"><button type="button" onClick={() => setIsResettingPassword(false)}>Back to sign in</button></div>
+              <div className="login-toggle"><button type="button" onClick={() => setIsResettingPassword(false)}>Back to log in</button></div>
             </form>
           ) : (
             <form onSubmit={handleCompletePasswordReset} className="login-form">
@@ -473,7 +476,7 @@ export function Login({ onLoginSuccess }: LoginProps) {
                   )}
                 </select>
                 {['Grade 7', 'Grade 8', 'Grade 9', 'Grade 10'].includes(academicLevel) && (
-                  <small style={{ color: '#2dd4bf', fontSize: '0.78rem', marginTop: '4px', display: 'block' }}>
+                  <small style={{ color: '#ffa552', fontSize: '0.78rem', marginTop: '4px', display: 'block' }}>
                     Junior High School students have no specialized strand yet (automatically set to Junior High School).
                   </small>
                 )}
@@ -487,7 +490,7 @@ export function Login({ onLoginSuccess }: LoginProps) {
             <div className="login-toggle">
               Already have an account?{' '}
               <button type="button" onClick={() => { setIsRegistering(false); setShowOtpStep(false); setErrorMsg(''); }}>
-                Sign in instead
+                Log in instead
               </button>
             </div>
           </form>

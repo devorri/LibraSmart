@@ -68,7 +68,7 @@ import {
   UserRound
 } from 'lucide-react'
 
-type View = 'overview' | 'catalog' | 'ai' | 'analytics' | 'reports' | 'qr' | 'users' | 'storefront' | 'trash' | 'profile'
+type View = 'overview' | 'catalog' | 'ebooks' | 'ai' | 'analytics' | 'reports' | 'qr' | 'users' | 'storefront' | 'trash' | 'profile'
 
 type ExternalBookResult = {
   key: string
@@ -94,6 +94,7 @@ const createExternalBookId = (key: string) => {
 }
 
 const SESSION_KEY = 'librasmart_active_session'
+const EBOOK_FILTER = 'E-Books'
 const VIEW_KEY = 'librasmart_current_view'
 
 export default function App() {
@@ -381,7 +382,7 @@ export default function App() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     const viewParam = params.get('view') as View | null
-    const validViews: View[] = ['overview', 'catalog', 'ai', 'analytics', 'reports', 'qr', 'users', 'storefront', 'trash', 'profile']
+    const validViews: View[] = ['overview', 'catalog', 'ebooks', 'ai', 'analytics', 'reports', 'qr', 'users', 'storefront', 'trash', 'profile']
     const initialView = viewParam && validViews.includes(viewParam) ? viewParam : 'storefront'
     const initialStoreTab = params.get('tab') === 'catalog' ? 'catalog' : 'home'
     const initialBookId = params.get('book')
@@ -428,7 +429,7 @@ export default function App() {
     const handlePopState = () => {
       const params = new URLSearchParams(window.location.search)
       const viewParam = params.get('view') as View | null
-    const validViews: View[] = ['overview', 'catalog', 'ai', 'analytics', 'reports', 'qr', 'users', 'storefront', 'trash', 'profile']
+    const validViews: View[] = ['overview', 'catalog', 'ebooks', 'ai', 'analytics', 'reports', 'qr', 'users', 'storefront', 'trash', 'profile']
       const nextView = viewParam && validViews.includes(viewParam) ? viewParam : 'storefront'
       const nextStoreTab = params.get('tab') === 'catalog' ? 'catalog' : 'home'
       const nextBookId = params.get('book')
@@ -751,7 +752,11 @@ export default function App() {
   }
 
   const handleDeleteUser = async (user: User) => {
-    if (window.confirm(`Are you sure you want to move student "${user.name}" to Trash?`)) {
+    if (user.role === 'Administrator' || user.user_id === currentUser?.user_id) {
+      alert('Administrator accounts and your own account cannot be deleted.')
+      return
+    }
+    if (window.confirm(`Are you sure you want to move ${user.role.toLowerCase()} "${user.name}" to Trash?`)) {
       const deleted = await softDeleteUser(user, currentUser?.name)
       if (deleted) {
         loadDatabaseData()
@@ -808,6 +813,9 @@ export default function App() {
       setEditUserMsg({ type: 'success', text: editingUser.name + "'s account updated successfully." })
       loadDatabaseData()
       setUsers(prev => prev.map(u => u.user_id === editingUser.user_id ? { ...u, phone_number: formattedPhone || null } : u))
+      if (currentUser && editingUser.user_id === currentUser.user_id) {
+        setCurrentUser({ ...currentUser, phone_number: formattedPhone || null })
+      }
       setTimeout(() => {
         setEditingUser(null)
         setEditUserMsg(null)
@@ -1145,15 +1153,49 @@ export default function App() {
       }
     })
 
-    return recs.slice(0, 3)
+    // Prioritize titles the user can act on right now (readable e-books or physical copies still on the shelf)
+    const isActionable = (b: Book) =>
+      b.status === 'E-book' || (b.status === 'Available' && (b.available_copies === undefined || b.available_copies > 0))
+    const ranked = [
+      ...recs.filter(r => isActionable(r.book)),
+      ...recs.filter(r => !isActionable(r.book))
+    ]
+
+    return ranked.slice(0, 3)
   }, [books, transactions, currentUser])
+
+  const ebookList = useMemo(() => books.filter(b => b.status === 'E-book'), [books])
+
+  const renderRecommendationAction = (book: Book) => {
+    if (book.status === 'E-book') {
+      return (
+        <button className="btn-primary" onClick={() => handleBorrowOnline(book)}>
+          <BookOpen size={15} /> Read Online
+        </button>
+      )
+    }
+    const isReservedByMe = currentUser ? transactions.some(t => t.user_id === currentUser.user_id && t.book_id === book.book_id && t.status === 'Requested') : false
+    const isBorrowedByMe = currentUser ? transactions.some(t => t.user_id === currentUser.user_id && t.book_id === book.book_id && t.status === 'Borrowed') : false
+    const hasCopies = book.status === 'Available' && (book.available_copies === undefined || book.available_copies > 0)
+    return (
+      <button
+        className="btn-primary"
+        onClick={() => handleRequestBorrow(book)}
+        disabled={!hasCopies || isReservedByMe || isBorrowedByMe}
+      >
+        <BookMarked size={15} />{' '}
+        {isReservedByMe ? 'Reserved – Awaiting Pick-up' : isBorrowedByMe ? 'Currently Borrowed' : hasCopies ? 'Reserve Online' : 'All Copies Out'}
+      </button>
+    )
+  }
 
   // -------------------------------------------------------------
   // CATEGORIES COMPILATION
   // -------------------------------------------------------------
   const categoriesList = useMemo(() => {
     const categories = new Set(books.map(b => b.category))
-    return ['All', ...Array.from(categories)]
+    categories.delete(EBOOK_FILTER)
+    return ['All', EBOOK_FILTER, ...Array.from(categories)]
   }, [books])
 
   // -------------------------------------------------------------
@@ -1168,7 +1210,8 @@ export default function App() {
         book.category.toLowerCase().includes(storefrontQuery.toLowerCase()) ||
         (book.program_strand_relevance && book.program_strand_relevance.toLowerCase().includes(storefrontQuery.toLowerCase()))
       
-      const matchCategory = selectedCategory === 'All' || book.category === selectedCategory
+      const matchCategory = selectedCategory === 'All' ||
+        (selectedCategory === EBOOK_FILTER ? book.status === 'E-book' : book.category === selectedCategory)
       return matchSearch && matchCategory
     })
   }, [books, storefrontQuery, selectedCategory])
@@ -1186,7 +1229,8 @@ export default function App() {
           book.category.toLowerCase().includes(catalogQuery.toLowerCase()) ||
           (book.program_strand_relevance && book.program_strand_relevance.toLowerCase().includes(catalogQuery.toLowerCase()))
 
-        const matchCategory = selectedCategory === 'All' || book.category === selectedCategory
+        const matchCategory = selectedCategory === 'All' ||
+        (selectedCategory === EBOOK_FILTER ? book.status === 'E-book' : book.category === selectedCategory)
         return matchSearch && matchCategory
       })
       .filter((book) => catalogRelevance === 'All' || (book.program_strand_relevance || 'General') === catalogRelevance)
@@ -1426,9 +1470,9 @@ export default function App() {
     if (!currentUser) {
       return {
         title: 'Public access portal',
-        description: 'Browse the catalog, preview learning resources, and sign in to request books or read e-books.',
+        description: 'Browse the catalog, preview learning resources, and log in to request books or read e-books.',
         primary: 'Browse Catalog',
-        secondary: 'Login',
+        secondary: 'Log In',
         primaryView: 'storefront' as View,
         secondaryView: 'storefront' as View
       }
@@ -1652,7 +1696,8 @@ export default function App() {
         {/* PUBLIC STORE HEADER */}
         <header className="store-header">
           <div className="store-brand">
-            <img src="/librasmart-logo-1024.png" alt="MPCI Logo" />
+            <img src="/mpci-logo.png" alt="Matalam Polytechnic College Logo" className="school-logo" />
+            <img src="/librasmart-logo-1024.png" alt="LibraSmart Logo" />
             <h2>LibraSmart</h2>
           </div>
 
@@ -1685,7 +1730,7 @@ export default function App() {
               </button>
             ) : (
               <button className="btn-primary" onClick={() => setShowLoginModal(true)}>
-                <UserCheck size={16} /> Login
+                <UserCheck size={16} /> Log In
               </button>
             )}
           </div>
@@ -1713,20 +1758,20 @@ export default function App() {
                         <button
                           className="btn-secondary"
                           onClick={() => setIsGatePassModalOpen(true)}
-                          style={{ color: '#2dd4bf', borderColor: 'rgba(45, 212, 191, 0.4)', display: 'inline-flex', alignItems: 'center', gap: '8px' }}
+                          style={{ color: '#ffa552', borderColor: 'rgba(255, 165, 82, 0.4)', display: 'inline-flex', alignItems: 'center', gap: '8px' }}
                         >
                           <QrCode size={18} /> Gate Entry / Exit Pass
                         </button>
                         {!currentUser && (
                           <button className="btn-secondary" onClick={() => setShowLoginModal(true)}>
-                            Login
+                            Log In
                           </button>
                         )}
                       </div>
                     </div>
                     
                     <div className="public-hero-preview" aria-label="LibraSmart preview">
-                      <img src="/librasmart-logo-1024.png" alt="LibraSmart logo" />
+                      <img src="/mpci-logo.png" alt="Matalam Polytechnic College logo" className="school-logo" />
                       <div>
                         <span>Today</span>
                         <strong>{activeTransactions.length} active transactions</strong>
@@ -1879,7 +1924,7 @@ export default function App() {
                             {book.cover_image_url ? (
                               <img src={book.cover_image_url} alt={book.title} style={{ width: '50px', height: '66px', objectFit: 'cover', borderRadius: '4px', boxShadow: '0 2px 4px rgba(0,0,0,0.15)', flexShrink: 0 }} />
                             ) : (
-                              <div style={{ width: '50px', height: '66px', borderRadius: '4px', background: 'linear-gradient(135deg, #0a5c63 0%, #1d2e38 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '10px', fontWeight: 'bold', padding: '2px', flexShrink: 0 }}>
+                              <div className="rec-cover-fallback" style={{ width: '50px', height: '66px', fontSize: '10px' }}>
                                 MPCI
                               </div>
                             )}
@@ -1890,21 +1935,8 @@ export default function App() {
                           </div>
                           <div style={{ padding: '0 16px 16px 16px', display: 'flex', flexDirection: 'column', flexGrow: 1 }}>
                             <p style={{ fontSize: '0.78rem', margin: '8px 0', color: '#e2e8f0', lineHeight: 1.4 }}>{reason}</p>
-                            <div className="book-action-grid" style={{ marginTop: 'auto', paddingTop: '8px' }}>
-                              <button
-                                className="btn-primary"
-                                onClick={() => handleBorrowOnline(book)}
-                                disabled={book.status !== 'E-book'}
-                              >
-                                Borrow Online
-                              </button>
-                              <button
-                                className="btn-secondary"
-                                onClick={() => handleRequestBorrow(book)}
-                                disabled={book.status !== 'Available' || (book.available_copies !== undefined && book.available_copies <= 0)}
-                              >
-                                {book.available_copies === 0 ? 'All Copies Out' : 'Borrow Physical'}
-                              </button>
+                            <div className="book-action-grid rec-action-single" style={{ marginTop: 'auto', paddingTop: '8px' }}>
+                              {renderRecommendationAction(book)}
                             </div>
                           </div>
                         </div>
@@ -2151,7 +2183,7 @@ export default function App() {
             <div className="test-sms-modal-content gate-pass-modal-box" style={{ maxWidth: (currentUser?.role === 'Librarian' || currentUser?.role === 'Administrator') ? '980px' : '520px', width: '94vw', maxHeight: '90vh', overflowY: 'auto' }} onClick={(e) => e.stopPropagation()}>
               <div className="test-sms-header" style={{ marginBottom: '12px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <QrCode size={20} style={{ color: '#2dd4bf' }} />
+                  <QrCode size={20} style={{ color: '#ffa552' }} />
                   <h3 style={{ margin: 0, fontSize: '1.1rem' }}>Library Gate Entry / Exit Scanner</h3>
                 </div>
                 <button
@@ -2184,7 +2216,8 @@ export default function App() {
       {/* SIDEBAR NAVIGATION */}
       <aside className="sidebar" aria-label="LibraSmart Navigation">
         <a className="brand" href="#top">
-          <img src="/librasmart-logo-1024.png" alt="MPCI Logo" />
+          <img src="/mpci-logo.png" alt="Matalam Polytechnic College Logo" className="school-logo" />
+          <img src="/librasmart-logo-1024.png" alt="LibraSmart Logo" />
           <span>LibraSmart</span>
         </a>
 
@@ -2203,6 +2236,13 @@ export default function App() {
           <button className={view === 'catalog' ? 'active' : ''} onClick={() => navigateToView('catalog')}>
             <BookOpen size={18} /> Book Catalog
           </button>
+
+          {(currentUser.role === 'Student' || currentUser.role === 'Teacher') && (
+            <button className={view === 'ebooks' ? 'active' : ''} onClick={() => navigateToView('ebooks')}>
+              <BookOpen size={18} /> E-Books
+              <span className="nav-count">{ebookList.length}</span>
+            </button>
+          )}
 
           {(currentUser.role === 'Student' || currentUser.role === 'Teacher') && (
             <button className={view === 'profile' ? 'active' : ''} onClick={() => { setProfileMsg(null); navigateToView('profile') }}>
@@ -2286,8 +2326,17 @@ export default function App() {
               <KeyRound size={14} /> Change Password
             </button>
           )}
+          {(currentUser.role === 'Librarian' || currentUser.role === 'Administrator') && (
+            <button
+              className="btn-secondary"
+              style={{ width: '100%', marginBottom: '6px', fontSize: '0.75rem', padding: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
+              onClick={() => openEditUserModal(users.find(u => u.user_id === currentUser.user_id) || currentUser)}
+            >
+              <Smartphone size={14} /> My Account / Phone
+            </button>
+          )}
           <button className="btn-logout" onClick={handleLogout}>
-            <LogOut size={14} /> Sign Out
+            <LogOut size={14} /> Log Out
           </button>
         </div>
       </aside>
@@ -2297,10 +2346,13 @@ export default function App() {
         
         {/* TOPBAR BANNER */}
         <header className="topbar">
-          <div className="topbar-info">
+          <div className="topbar-info topbar-with-logo">
+            <img src="/mpci-logo.png" alt="Matalam Polytechnic College Logo" className="topbar-school-logo" />
+            <div>
             <p className="eyebrow">Matalam Polytechnic College Inc.</p>
             <h1>Library Management Desk</h1>
             <p className="subtitle">AI recommendations, E-Books, SMS alerts, and live entry logs</p>
+            </div>
           </div>
           
           <div className={`connection-pill ${isUsingMock() ? 'mock' : ''}`}>
@@ -2327,7 +2379,7 @@ export default function App() {
                   </button>
                   {currentUser?.role === 'Student' ? (
                     <button className="btn-secondary" onClick={() => setIsGatePassModalOpen(true)} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <QrCode size={17} style={{ color: '#2dd4bf' }} /> Show My QR Gate Pass
+                      <QrCode size={17} style={{ color: '#ffa552' }} /> Show My QR Gate Pass
                     </button>
                   ) : (
                     <button className="btn-secondary" onClick={() => navigateToView(roleFocus.secondaryView)}>
@@ -2390,9 +2442,9 @@ export default function App() {
 
             {/* STUDENT QUICK QR GATE PASS BANNER */}
             {currentUser.role === 'Student' && (
-              <div className="panel-card student-overview-gatepass-banner" style={{ background: 'linear-gradient(135deg, rgba(15, 117, 129, 0.28), rgba(45, 212, 191, 0.14))', border: '1px solid rgba(45, 212, 191, 0.4)', marginBottom: '18px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 20px', borderRadius: '14px', flexWrap: 'wrap', gap: '14px' }}>
+              <div className="panel-card student-overview-gatepass-banner" style={{ background: 'linear-gradient(135deg, rgba(221, 90, 18, 0.28), rgba(255, 165, 82, 0.14))', border: '1px solid rgba(255, 165, 82, 0.4)', marginBottom: '18px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 20px', borderRadius: '14px', flexWrap: 'wrap', gap: '14px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-                  <div style={{ background: '#2dd4bf', color: '#09131d', padding: '12px', borderRadius: '12px', display: 'grid', placeItems: 'center', boxShadow: '0 4px 12px rgba(45, 212, 191, 0.3)' }}>
+                  <div style={{ background: '#ffa552', color: '#09131d', padding: '12px', borderRadius: '12px', display: 'grid', placeItems: 'center', boxShadow: '0 4px 12px rgba(255, 165, 82, 0.3)' }}>
                     <QrCode size={28} />
                   </div>
                   <div>
@@ -2521,7 +2573,7 @@ export default function App() {
                     <strong>Technical Failure</strong>
                     <span>Power backups (UPS), Cloud hosting replication, offline local database fallback capability.</span>
                   </div>
-                  <div className="recovery-row-new" style={{ borderLeftColor: '#0f7581' }}>
+                  <div className="recovery-row-new" style={{ borderLeftColor: '#dd5a12' }}>
                     <strong>Network Outage</strong>
                     <span>Hybrid offline local logging. Sync entry/exit attendance to Supabase when connection restores.</span>
                   </div>
@@ -2681,13 +2733,13 @@ export default function App() {
           <section className="panel-card profile-management-card" style={{ maxWidth: '850px', margin: '0 auto' }}>
             <div className="panel-card-header" style={{ marginBottom: '20px', borderBottom: '1px solid rgba(255, 255, 255, 0.1)', paddingBottom: '16px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                <div style={{ width: '64px', height: '64px', borderRadius: '50%', background: 'linear-gradient(135deg, #0f7581, #2dd4bf)', display: 'grid', placeItems: 'center', color: '#ffffff', fontSize: '1.8rem', fontWeight: 'bold', boxShadow: '0 4px 14px rgba(15, 117, 129, 0.4)' }}>
+                <div style={{ width: '64px', height: '64px', borderRadius: '50%', background: 'linear-gradient(135deg, #dd5a12, #ffa552)', display: 'grid', placeItems: 'center', color: '#ffffff', fontSize: '1.8rem', fontWeight: 'bold', boxShadow: '0 4px 14px rgba(221, 90, 18, 0.4)' }}>
                   {currentUser.name ? currentUser.name.charAt(0).toUpperCase() : 'U'}
                 </div>
                 <div>
                   <h2 style={{ margin: 0, color: '#ffffff', fontSize: '1.45rem', fontWeight: 700 }}>{currentUser.name}</h2>
                   <div style={{ display: 'flex', gap: '10px', marginTop: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
-                    <span style={{ background: 'rgba(45, 212, 191, 0.15)', color: '#2dd4bf', border: '1px solid rgba(45, 212, 191, 0.3)', padding: '3px 12px', borderRadius: '20px', fontSize: '0.78rem', fontWeight: 700 }}>
+                    <span style={{ background: 'rgba(255, 165, 82, 0.15)', color: '#ffa552', border: '1px solid rgba(255, 165, 82, 0.3)', padding: '3px 12px', borderRadius: '20px', fontSize: '0.78rem', fontWeight: 700 }}>
                       {currentUser.role}
                     </span>
                     <span style={{ color: '#94a3b8', fontSize: '0.85rem' }}>@{currentUser.username}</span>
@@ -2700,7 +2752,7 @@ export default function App() {
 
             <div style={{ marginBottom: '20px' }}>
               <h3 style={{ color: '#ffffff', fontSize: '1.15rem', fontWeight: 700, margin: '0 0 4px 0', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <UserRound size={20} style={{ color: '#2dd4bf' }} /> Edit Personal Information
+                <UserRound size={20} style={{ color: '#ffa552' }} /> Edit Personal Information
               </h3>
               <p style={{ color: '#94a3b8', fontSize: '0.85rem', margin: 0 }}>Update your contact details, academic level, and program information.</p>
             </div>
@@ -2736,7 +2788,7 @@ export default function App() {
                   style={{ width: '100%', padding: '10px 14px', borderRadius: '8px', background: '#09131d', border: '1px solid rgba(255, 255, 255, 0.15)', color: '#ffffff', fontSize: '0.92rem' }}
                   required
                 />
-                <small style={{ color: '#2dd4bf', fontSize: '0.76rem', marginTop: '4px', display: 'block' }}>You can update your username. It must be unique across all accounts.</small>
+                <small style={{ color: '#ffa552', fontSize: '0.76rem', marginTop: '4px', display: 'block' }}>You can update your username. It must be unique across all accounts.</small>
               </div>
 
               <div className="form-group">
@@ -2827,7 +2879,7 @@ export default function App() {
                   <option value="Faculty">Faculty / Department</option>
                 </select>
                 {['Grade 7', 'Grade 8', 'Grade 9', 'Grade 10'].includes(profileAcademicLevel) && (
-                  <small style={{ color: '#2dd4bf', fontSize: '0.78rem', marginTop: '4px', display: 'block' }}>
+                  <small style={{ color: '#ffa552', fontSize: '0.78rem', marginTop: '4px', display: 'block' }}>
                     Junior High School students have no specialized strand yet (automatically set to Junior High School).
                   </small>
                 )}
@@ -2966,7 +3018,7 @@ export default function App() {
                             {book.cover_image_url ? (
                               <img src={book.cover_image_url} alt={book.title} style={{ width: '36px', height: '48px', objectFit: 'cover', borderRadius: '4px', boxShadow: '0 1px 3px rgba(0,0,0,0.15)' }} />
                             ) : (
-                              <div style={{ width: '36px', height: '48px', borderRadius: '4px', background: 'linear-gradient(135deg, #0a5c63 0%, #1d2e38 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '10px', fontWeight: 'bold', textAlign: 'center', padding: '2px' }}>
+                              <div style={{ width: '36px', height: '48px', borderRadius: '4px', background: 'linear-gradient(135deg, #c8520f 0%, #1d2e38 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '10px', fontWeight: 'bold', textAlign: 'center', padding: '2px' }}>
                                 MPCI
                               </div>
                             )}
@@ -3057,7 +3109,7 @@ export default function App() {
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px', flexWrap: 'wrap', gap: '8px' }}>
                 <div>
                   <h4 style={{ margin: 0, color: '#ffffff', fontSize: '1.05rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <Compass size={18} style={{ color: '#2dd4bf' }} /> Online External Book Discovery (Google Books)
+                    <Compass size={18} style={{ color: '#ffa552' }} /> Online External Book Discovery (Google Books)
                   </h4>
                   <p style={{ margin: '3px 0 0 0', color: '#94a3b8', fontSize: '0.84rem' }}>
                     Search and preview millions of online e-books &amp; references beyond local shelf inventory.
@@ -3116,7 +3168,7 @@ export default function App() {
                                 <button
                                   type="button"
                                   className="external-link-btn"
-                                  style={{ background: 'rgba(45, 212, 191, 0.15)', color: '#2dd4bf', border: '1px solid rgba(45, 212, 191, 0.3)' }}
+                                  style={{ background: 'rgba(255, 165, 82, 0.15)', color: '#ffa552', border: '1px solid rgba(255, 165, 82, 0.3)' }}
                                   onClick={() => {
                                     resetBookForm()
                                     setNewBookTitle(result.title)
@@ -3144,6 +3196,49 @@ export default function App() {
         )}
 
         {/* VIEW AI RECOMMENDATIONS */}
+        {view === 'ebooks' && (
+          <div className="panel-card">
+            <div className="panel-card-header">
+              <div className="panel-title">
+                <BookOpen size={20} />
+                <h3>E-Book Library ({ebookList.length})</h3>
+              </div>
+              <p className="panel-subtitle">All digital titles in one place — tap Read Online to open any e-book instantly.</p>
+            </div>
+
+            {ebookList.length === 0 ? (
+              <p className="empty-msg">No e-books have been uploaded yet.</p>
+            ) : (
+              <div className="ai-recommendations-list">
+                {ebookList.map((book) => (
+                  <div key={book.book_id} className="ai-rec-card" style={{ display: 'flex', flexDirection: 'column' }}>
+                    <span className="ai-badge-header">{book.category}</span>
+                    <div style={{ display: 'flex', gap: '14px', padding: '16px 16px 0 16px', flexGrow: 1 }}>
+                      {book.cover_image_url ? (
+                        <img src={book.cover_image_url} alt={book.title} style={{ width: '60px', height: '80px', objectFit: 'cover', borderRadius: '6px', boxShadow: '0 2px 5px rgba(0,0,0,0.2)', flexShrink: 0 }} />
+                      ) : (
+                        <div className="rec-cover-fallback" style={{ width: '60px', height: '80px' }}>E-Book</div>
+                      )}
+                      <div>
+                        <h4 style={{ margin: '0 0 4px 0', fontSize: '1rem', lineHeight: '1.2', color: '#ffffff', fontWeight: 700 }}>{book.title}</h4>
+                        <span className="author" style={{ color: '#cbd5e1' }}>By {book.author}</span>
+                        {book.program_strand_relevance && (
+                          <p style={{ margin: '6px 0 0 0', fontSize: '0.78rem', color: 'var(--color-text-muted)' }}>For: {book.program_strand_relevance}</p>
+                        )}
+                      </div>
+                    </div>
+                    <div className="book-action-grid rec-action-single" style={{ padding: '12px 16px 16px 16px' }}>
+                      <button className="btn-primary" onClick={() => handleBorrowOnline(book)}>
+                        <BookOpen size={15} /> Read Online
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         {view === 'ai' && (
           <div className="panel-card">
             <div className="panel-card-header">
@@ -3171,7 +3266,7 @@ export default function App() {
                       {book.cover_image_url ? (
                         <img src={book.cover_image_url} alt={book.title} style={{ width: '60px', height: '80px', objectFit: 'cover', borderRadius: '6px', boxShadow: '0 2px 5px rgba(0,0,0,0.2)', flexShrink: 0 }} />
                       ) : (
-                        <div style={{ width: '60px', height: '80px', borderRadius: '6px', background: 'linear-gradient(135deg, #0a5c63 0%, #1d2e38 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '12px', fontWeight: 'bold', textAlign: 'center', padding: '4px', flexShrink: 0 }}>
+                        <div className="rec-cover-fallback" style={{ width: '60px', height: '80px' }}>
                           Book
                         </div>
                       )}
@@ -3184,21 +3279,8 @@ export default function App() {
                       {reason}
                     </div>
                     
-                    <div className="book-action-grid" style={{ padding: '12px 16px 16px 16px' }}>
-                      <button
-                        className="btn-primary"
-                        onClick={() => handleBorrowOnline(book)}
-                        disabled={book.status !== 'E-book'}
-                      >
-                        Read Online
-                      </button>
-                      <button
-                        className="btn-secondary"
-                        onClick={() => handleRequestBorrow(book)}
-                        disabled={book.status !== 'Available'}
-                      >
-                        Reserve Online
-                      </button>
+                    <div className="book-action-grid rec-action-single" style={{ padding: '12px 16px 16px 16px' }}>
+                      {renderRecommendationAction(book)}
                     </div>
                   </div>
                 ))
@@ -3218,7 +3300,7 @@ export default function App() {
           const totalTx = analyticsData.totalBorrows || 1
           const strandEntries = Object.entries(analyticsData.strandBorrows) as [string, number][]
           const maxStrand = Math.max(...strandEntries.map(([, v]) => v), 1)
-          const strandColors: Record<string, string> = { 'Junior High School': '#2dd4bf', ICT: '#0f7581', SMAW: '#f59e0b', Automotive: '#ef4444', HUMSS: '#8b5cf6', Healthcare: '#10b981', IT: '#0284c7', Faculty: '#64748b' }
+          const strandColors: Record<string, string> = { 'Junior High School': '#ffa552', ICT: '#dd5a12', SMAW: '#f59e0b', Automotive: '#ef4444', HUMSS: '#8b5cf6', Healthcare: '#10b981', IT: '#0284c7', Faculty: '#64748b' }
 
           // Status breakdown for donut
           const availPct = books.length ? Math.round((analyticsData.availableBooks / books.length) * 100) : 0
@@ -3308,7 +3390,7 @@ export default function App() {
                             className="bar-fill"
                             style={{
                               width: `${Math.max(3, (count / maxStrand) * 100)}%`,
-                              backgroundColor: strandColors[strand] || '#0f7581'
+                              backgroundColor: strandColors[strand] || '#dd5a12'
                             }}
                           />
                         </div>
@@ -3340,7 +3422,7 @@ export default function App() {
                       <circle cx="100" cy="100" r="70" fill="transparent" stroke="#f2bd4a" strokeWidth="22"
                         strokeDasharray={`${seg2} ${circ}`} strokeDashoffset={`${-seg1}`}
                         style={{ transition: 'stroke-dasharray 0.6s ease' }} />
-                      <circle cx="100" cy="100" r="70" fill="transparent" stroke="#0f7581" strokeWidth="22"
+                      <circle cx="100" cy="100" r="70" fill="transparent" stroke="#dd5a12" strokeWidth="22"
                         strokeDasharray={`${seg3} ${circ}`} strokeDashoffset={`${-(seg1 + seg2)}`}
                         style={{ transition: 'stroke-dasharray 0.6s ease' }} />
                       <circle cx="100" cy="100" r="54" fill="var(--color-surface)" />
@@ -3368,7 +3450,7 @@ export default function App() {
                         </div>
                       </div>
                       <div className="legend-row">
-                        <div className="legend-color-dot" style={{ backgroundColor: '#0f7581' }} />
+                        <div className="legend-color-dot" style={{ backgroundColor: '#dd5a12' }} />
                         <div className="legend-info">
                           <span className="legend-title">E-Books</span>
                           <span className="legend-count">{analyticsData.ebookBooks} titles — {ebookPct}%</span>
@@ -3403,7 +3485,7 @@ export default function App() {
                               className="bar-fill"
                               style={{
                                 width: `${Math.max(3, (count / maxCat) * 100)}%`,
-                                backgroundColor: '#0f7581'
+                                backgroundColor: '#dd5a12'
                               }}
                             />
                           </div>
@@ -3947,12 +4029,12 @@ export default function App() {
                           >
                             <Pencil size={13} /> Edit
                           </button>
-                          {user.role === 'Student' && (
+                          {user.role !== 'Administrator' && user.user_id !== currentUser.user_id && (
                             <button
                               className="btn-secondary"
                               style={{ padding: '4px 8px', color: '#dc2626', fontSize: '0.75rem' }}
                               onClick={() => handleDeleteUser(user)}
-                              title="Move student to Trash"
+                              title="Move account to Trash"
                             >
                               <Trash2 size={14} /> Delete
                             </button>
@@ -4044,7 +4126,7 @@ export default function App() {
         <div className="modal-overlay">
           <div className="modal-card" style={{ maxWidth: '480px' }}>
             <div className="modal-header">
-              <h3>Edit User: {editingUser.name}</h3>
+              <h3>{editingUser.user_id === currentUser.user_id ? 'My Account' : `Edit User: ${editingUser.name}`}</h3>
               <button className="btn-close-modal" onClick={() => { setEditingUser(null); setEditUserMsg(null) }}>
                 <X size={18} />
               </button>
@@ -4077,6 +4159,11 @@ export default function App() {
                   />
                 </div>
 
+                {editingUser.user_id === currentUser.user_id ? (
+                  <p style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', margin: '4px 0 0 0' }}>
+                    This number receives your SMS alerts and password-reset codes. Use "Change Password" in the sidebar to update your password.
+                  </p>
+                ) : (
                 <div style={{ borderTop: '1px solid rgba(255,255,255,0.08)', margin: '16px 0', paddingTop: '16px' }}>
                   <p style={{ fontSize: '0.82rem', color: 'var(--color-text-muted)', marginBottom: '12px' }}>
                     <KeyRound size={14} style={{ verticalAlign: 'middle', marginRight: '6px' }} />
@@ -4107,6 +4194,7 @@ export default function App() {
                     />
                   </div>
                 </div>
+                )}
 
                 <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '16px' }}>
                   <button type="button" className="btn-secondary" onClick={() => { setEditingUser(null); setEditUserMsg(null) }}>
@@ -4448,9 +4536,9 @@ Chapter 2: Structural implementations..."
                     padding: '8px 14px',
                     margin: '10px 0',
                     borderRadius: '8px',
-                    background: changePasswordTimerSec > 0 ? 'rgba(45, 212, 191, 0.1)' : 'rgba(239, 68, 68, 0.1)',
-                    border: `1px solid ${changePasswordTimerSec > 0 ? 'rgba(45, 212, 191, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`,
-                    color: changePasswordTimerSec > 0 ? '#2dd4bf' : '#ef4444',
+                    background: changePasswordTimerSec > 0 ? 'rgba(255, 165, 82, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+                    border: `1px solid ${changePasswordTimerSec > 0 ? 'rgba(255, 165, 82, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`,
+                    color: changePasswordTimerSec > 0 ? '#ffa552' : '#ef4444',
                     fontSize: '0.85rem'
                   }}>
                     <span>Session Expiry Limit:</span>
@@ -4517,7 +4605,7 @@ Chapter 2: Structural implementations..."
           <div className="test-sms-modal-content gate-pass-modal-box" style={{ maxWidth: (currentUser?.role === 'Librarian' || currentUser?.role === 'Administrator') ? '980px' : '520px', width: '94vw', maxHeight: '90vh', overflowY: 'auto' }} onClick={(e) => e.stopPropagation()}>
             <div className="test-sms-header" style={{ marginBottom: '12px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <QrCode size={20} style={{ color: '#2dd4bf' }} />
+                <QrCode size={20} style={{ color: '#ffa552' }} />
                 <h3 style={{ margin: 0, fontSize: '1.1rem' }}>Library Gate Entry / Exit Scanner</h3>
               </div>
               <button
